@@ -22,7 +22,8 @@ jobs:
       - run: npm run build
         working-directory: web
         env:
-          VITE_DATA_BASE: ${{ vars.DATA_BASE_URL }} # e.g. https://data.seasonmap.example
+          VITE_DATA_BASE: ${{ vars.DATA_BASE_URL }} # e.g. https://pub-xxxx.r2.dev
+          VITE_CHAT_API: ${{ vars.CHAT_API_URL }} # e.g. https://seasonmap-api.<acct>.workers.dev/api/chat
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:

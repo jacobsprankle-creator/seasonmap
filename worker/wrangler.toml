@@ -7,9 +7,9 @@ compatibility_date = "2026-07-01"
 [dev]
 port = 8787
 
-# Where the pipeline's published static data lives.
-#   prod:      https://data.seasonmap.example (R2 custom domain)
-#   local dev: the vite dev server serving web/public/data
+# Where the pipeline's published static data lives (R2 public bucket).
+# For local dev against local data, override in .dev.vars:
+#   echo 'DATA_BASE_URL=http://localhost:5173/data' >> .dev.vars
 [vars]
 DATA_BASE_URL = "https://pub-e7a8bd47335d4a62afe37eee2bf4733e.r2.dev"
 

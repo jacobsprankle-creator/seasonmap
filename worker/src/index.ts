@@ -459,11 +459,27 @@ async function chat(request: Request, env: Env): Promise<Response> {
   return Response.json({ error: "tool loop exceeded" }, { status: 502 });
 }
 
+const CORS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-headers": "content-type",
+};
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
+    const inner = await handle(request, env);
+    const headers = new Headers(inner.headers);
+    for (const [k, v] of Object.entries(CORS)) headers.set(k, v);
+    return new Response(inner.body, { status: inner.status, headers });
+  },
+};
+
+async function handle(request: Request, env: Env): Promise<Response> {
+  {
     const url = new URL(request.url);
     if (url.pathname === "/api/health") {
-      return Response.json({ ok: true, service: "seasonmap-worker", phase: 2 });
+      return Response.json({ ok: true, service: "seasonmap-worker", version: "1.0" });
     }
     if (url.pathname === "/api/query" && request.method === "GET") {
       const layer = url.searchParams.get("layer") ?? "frost_date";
@@ -492,5 +508,5 @@ export default {
       }
     }
     return new Response("Not found", { status: 404 });
-  },
-};
+  }
+}
