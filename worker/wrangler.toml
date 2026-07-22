@@ -11,7 +11,7 @@ port = 8787
 #   prod:      https://data.seasonmap.example (R2 custom domain)
 #   local dev: the vite dev server serving web/public/data
 [vars]
-DATA_BASE_URL = "http://localhost:5173/data"
+DATA_BASE_URL = "https://pub-e7a8bd47335d4a62afe37eee2bf4733e.r2.dev"
 
 # Secrets (never in this file):
 #   wrangler secret put ANTHROPIC_API_KEY        # prod
