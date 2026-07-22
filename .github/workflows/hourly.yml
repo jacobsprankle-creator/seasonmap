@@ -1,16 +1,21 @@
 name: hourly-conditions
 
-# Keeps the current-conditions layers honest. Cheap: one coarse Open-Meteo
-# fetch + four small tile sets, ~2 minutes. Free on public repos.
+# Keeps the "live during the day" layers honest: current conditions (temp,
+# humidity, dew point, wind), river gauges, and active-storm tracks + NHC
+# cone. Radar / satellite / alerts / SPC outlooks need nothing here — the
+# frontend reads those live feeds directly.
 on:
   schedule:
     - cron: "8 * * * *"
   workflow_dispatch:
 
+env:
+  PYTHONUNBUFFERED: "1"
+
 jobs:
   conditions:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,14 +24,21 @@ jobs:
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
       - run: pip install -r pipeline/requirements.txt
-      - name: Publish current conditions
+      - name: Restore static cache (read-only)
+        uses: actions/cache/restore@v4
+        with:
+          path: static_cache
+          key: static-cache-v2-hourly-${{ github.run_id }}
+          restore-keys: static-cache-v2-
+      - name: Publish current conditions + rivers + active storms
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           PIPELINE_USER_AGENT: ${{ vars.PIPELINE_USER_AGENT }}
+          REQUIRE_R2: "1"
         run: |
-          for L in conditions_temp conditions_humidity conditions_dewpoint conditions_wind rivers; do
-            python -m pipeline.run --layer "$L" --date today
-          done
+          python -m pipeline.run \
+            --layer "conditions_temp,conditions_humidity,conditions_dewpoint,conditions_wind,rivers,hurricanes_active" \
+            --date today

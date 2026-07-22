@@ -115,7 +115,11 @@ def run_layer(layer_name: str, run_date: str, publisher, max_zoom: int) -> List[
 
 def main(argv: List[str] = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline.run", description="seasonmap batch pipeline")
-    parser.add_argument("--layer", default="all", help="layer slug or 'all' (implemented layers)")
+    parser.add_argument(
+        "--layer",
+        default="all",
+        help="layer slug, comma-separated slugs, or 'all' (implemented layers)",
+    )
     parser.add_argument("--date", default="today", help="run date YYYY-MM-DD or 'today'")
     parser.add_argument("--max-zoom", type=int, default=tiling.DEFAULT_MAX_ZOOM)
     parser.add_argument("--out", default=None, help="force local output dir (skips R2 even if configured)")
@@ -126,12 +130,18 @@ def main(argv: List[str] = None) -> int:
 
     if args.layer == "all":
         targets = list(IMPLEMENTED_LAYERS)
-    elif args.layer in LAYERS:
-        targets = [args.layer]
     else:
-        parser.error(f"unknown layer '{args.layer}' (known: {', '.join(LAYERS)})")
+        targets = [s.strip() for s in args.layer.split(",") if s.strip()]
+        unknown = [s for s in targets if s not in LAYERS]
+        if unknown:
+            parser.error(f"unknown layer(s) {unknown} (known: {', '.join(LAYERS)})")
 
-    print(f"seasonmap pipeline · date={run_date} · layers={targets} · publish={publisher.describe()}")
+    print(
+        f"seasonmap pipeline · date={run_date} · {len(targets)} layer(s): "
+        f"{', '.join(targets)} · publish={publisher.describe()}",
+        flush=True,
+    )
+    publish.self_test(publisher)
     failures = 0
     for name in targets:
         t0 = time.time()

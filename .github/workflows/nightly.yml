@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       layer:
-        description: "Layer slug or 'all'"
+        description: "Layer slug(s), comma-separated, or 'all'"
         default: "all"
         required: false
       date:
@@ -14,36 +14,146 @@ on:
         default: "today"
         required: false
 
+env:
+  PYTHONUNBUFFERED: "1"
+
 jobs:
-  pipeline:
+  # ── 1. Warm the shared static-input cache once ─────────────────────────
+  # DEM + PRISM normals + frost climatologies. The matrix jobs below restore
+  # this cache instead of each re-downloading ~500 MB of inputs. Saved under
+  # a per-run key (always saveable) and restored by newest prefix match, so
+  # a killed run can never poison the cache.
+  warm:
     runs-on: ubuntu-latest
-    timeout-minutes: 120 # 73 layers; a full run takes ~60–100 min on a hosted runner
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: pipeline/requirements.txt
-
-      - name: Install dependencies
-        run: pip install -r pipeline/requirements.txt
-
-      - name: Restore static input cache (PRISM normals, elevation, …)
-        uses: actions/cache@v4
+      - run: pip install -r pipeline/requirements.txt
+      - name: Restore newest static cache
+        uses: actions/cache/restore@v4
         with:
           path: static_cache
-          key: static-cache-v1
+          key: static-cache-v2-${{ github.run_id }}
+          restore-keys: static-cache-v2-
+      - name: Warm static inputs (DEM, PRISM, frost climatology)
+        env:
+          PIPELINE_USER_AGENT: ${{ vars.PIPELINE_USER_AGENT }}
+        run: python -m pipeline.warm
+      - name: Save static cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: static_cache
+          key: static-cache-v2-${{ github.run_id }}
 
-      - name: Run pipeline
+  # ── 2. All layer groups in parallel ────────────────────────────────────
+  # fail-fast disabled: one group failing (or timing out) never takes the
+  # others down. `if: always()` keeps the night alive even if warm failed —
+  # groups then download what they need themselves.
+  layers:
+    needs: warm
+    if: ${{ always() && (github.event_name == 'schedule' || github.event.inputs.layer == 'all' || github.event.inputs.layer == '') }}
+    runs-on: ubuntu-latest
+    name: ${{ matrix.group }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: climatology
+            layers: elevation,frost,frost_date,frost_date_36,frost_date_28,snowline
+            timeout: 60
+          - group: seasons
+            layers: foliage,leafout,leafout_bloom
+            timeout: 30
+          - group: storms
+            layers: hurricanes_majors,hurricanes_modern,hurricanes_active,tornadoes_violent,tornadoes_strong,tornadoes_weak
+            timeout: 30
+          - group: water
+            layers: water_temp,rivers,waves,drought
+            timeout: 45
+          - group: nowcast
+            layers: conditions_temp,conditions_humidity,conditions_dewpoint,conditions_wind,air_aqi,air_pm25,air_smoke
+            timeout: 40
+          - group: model-gfs
+            layers: gfs_tmax,gfs_precip,gfs_snow,gfs_mslp,gfs_z500,gfs_w250,gfs_gusts,gfs_cape
+            timeout: 50
+          - group: model-euro
+            layers: euro_tmax,euro_precip,euro_snow,euro_mslp,euro_z500,euro_w250,euro_gusts,euro_cape
+            timeout: 50
+          - group: model-hrrr
+            layers: hrrr_tmax,hrrr_precip,hrrr_snow,hrrr_mslp,hrrr_gusts,hrrr_cape
+            timeout: 50
+          - group: model-ukmet
+            layers: ukmet_tmax,ukmet_precip,ukmet_snow,ukmet_mslp,ukmet_z500,ukmet_w250,ukmet_gusts,ukmet_cape
+            timeout: 50
+          - group: model-icon
+            layers: icon_tmax,icon_precip,icon_snow,icon_mslp,icon_z500,icon_w250,icon_gusts,icon_cape
+            timeout: 50
+          - group: model-gem
+            layers: gem_tmax,gem_precip,gem_snow,gem_mslp,gem_z500,gem_w250,gem_gusts,gem_cape
+            timeout: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt
+      - name: Restore static cache
+        uses: actions/cache/restore@v4
+        with:
+          path: static_cache
+          key: static-cache-v2-${{ github.run_id }}
+          restore-keys: static-cache-v2-
+      - name: Run ${{ matrix.group }}
         env:
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           PIPELINE_USER_AGENT: ${{ vars.PIPELINE_USER_AGENT }}
+          REQUIRE_R2: "1"
         run: |
           python -m pipeline.run \
-            --layer "${{ github.event.inputs.layer || 'all' }}" \
+            --layer "${{ matrix.layers }}" \
+            --date "${{ github.event.inputs.date || 'today' }}"
+
+  # ── 3. Manual single-layer runs (debugging) ────────────────────────────
+  single:
+    needs: warm
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && github.event.inputs.layer != 'all' && github.event.inputs.layer != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+      - run: pip install -r pipeline/requirements.txt
+      - name: Restore static cache
+        uses: actions/cache/restore@v4
+        with:
+          path: static_cache
+          key: static-cache-v2-${{ github.run_id }}
+          restore-keys: static-cache-v2-
+      - name: Run ${{ github.event.inputs.layer }}
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          PIPELINE_USER_AGENT: ${{ vars.PIPELINE_USER_AGENT }}
+          REQUIRE_R2: "1"
+        run: |
+          python -m pipeline.run \
+            --layer "${{ github.event.inputs.layer }}" \
             --date "${{ github.event.inputs.date || 'today' }}"

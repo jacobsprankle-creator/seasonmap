@@ -99,11 +99,46 @@ class R2Publisher:
 
 
 def get_publisher(out_dir: Optional[str] = None):
-    """R2 when fully configured, local directory otherwise."""
+    """R2 when fully configured, local directory otherwise.
+
+    Set REQUIRE_R2=1 (CI does) to turn the silent local fallback into a hard
+    error naming the missing secrets — publishing a nightly run to a CI
+    runner's disk is worse than failing fast.
+    """
     required = ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
-    if all(os.environ.get(k) for k in required) and out_dir is None:
+    missing = [k for k in required if not os.environ.get(k)]
+    if not missing and out_dir is None:
         return R2Publisher()
+    if os.environ.get("REQUIRE_R2") and out_dir is None:
+        raise SystemExit(
+            "REQUIRE_R2 is set but R2 is not fully configured — missing/empty: "
+            f"{', '.join(missing)}. Fix the repo's Actions secrets (Settings → "
+            "Secrets and variables → Actions → Secrets)."
+        )
     return LocalPublisher(out_dir)
+
+
+def self_test(publisher) -> None:
+    """Prove the publish target is writable BEFORE spending compute.
+
+    Uploads health/pipeline-ping.json; with a public R2 bucket this doubles as
+    an externally checkable beacon that credentials work.
+    """
+    payload = json.dumps(
+        {
+            "ok": True,
+            "at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "target": publisher.describe(),
+        }
+    ).encode("utf-8")
+    try:
+        publisher.put_bytes(payload, "health/pipeline-ping.json")
+    except Exception as exc:  # noqa: BLE001 — we want ANY failure surfaced here
+        raise SystemExit(
+            f"publish self-test FAILED for {publisher.describe()}: {exc}\n"
+            "Nothing was computed. Check R2 credentials/bucket name."
+        ) from None
+    print(f"publish self-test ok → {publisher.describe()} (health/pipeline-ping.json)", flush=True)
 
 
 # ---------------------------------------------------------------------------
