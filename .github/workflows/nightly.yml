@@ -62,6 +62,7 @@ jobs:
     name: ${{ matrix.group }}
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
+      max-parallel: 3
       fail-fast: false
       matrix:
         include:
