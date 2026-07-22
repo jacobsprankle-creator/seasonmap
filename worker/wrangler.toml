@@ -1,0 +1,18 @@
+name = "seasonmap-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+# The web dev server proxies /api → :8787; fail loudly rather than drift to a
+# random port if it's occupied.
+[dev]
+port = 8787
+
+# Where the pipeline's published static data lives.
+#   prod:      https://data.seasonmap.example (R2 custom domain)
+#   local dev: the vite dev server serving web/public/data
+[vars]
+DATA_BASE_URL = "http://localhost:5173/data"
+
+# Secrets (never in this file):
+#   wrangler secret put ANTHROPIC_API_KEY        # prod
+#   echo 'ANTHROPIC_API_KEY=sk-ant-...' > .dev.vars   # local dev (gitignored)

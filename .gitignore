@@ -1,0 +1,26 @@
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# pipeline outputs & caches (published to R2 in prod)
+out/
+static_cache/
+preview_*.png
+
+# web
+web/node_modules/
+web/dist/
+web/public/data
+
+# worker
+worker/node_modules/
+worker/.wrangler/
+
+# misc
+.DS_Store
+*.log
+.env
+.env.*
+worker/.dev.vars

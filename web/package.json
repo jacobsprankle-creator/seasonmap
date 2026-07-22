@@ -1,0 +1,26 @@
+{
+  "name": "seasonmap-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "link-data": "node -e \"const fs=require('fs');fs.mkdirSync('public',{recursive:true});try{fs.symlinkSync('../../out','public/data','dir')}catch(e){if(e.code!=='EEXIST')throw e};console.log('web/public/data -> ../../out')\""
+  },
+  "dependencies": {
+    "geotiff": "^3.0.5",
+    "maplibre-gl": "^4.7.1",
+    "pmtiles": "^3.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.6.2",
+    "vite": "^5.4.11"
+  }
+}
