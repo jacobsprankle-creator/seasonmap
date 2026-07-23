@@ -30,7 +30,11 @@ export default function App() {
   const [layerId, setLayerId] = useState<string>(() => {
     const requested = initial.layer;
     if (requested && baseLayerFor(requested)?.available) return requested;
-    return LAYER_DEFS.find((l) => l.available)!.id;
+    // Boot to the first layer's default VARIANT — the bare base id of a
+    // variant group (e.g. "conditions") has no meta of its own.
+    const first = LAYER_DEFS.find((l) => l.available)!;
+    const dflt = first.variants?.find((v) => v.isDefault) ?? first.variants?.[0];
+    return dflt ? dflt.id : first.id;
   });
   const baseLayer = baseLayerFor(layerId);
   const [meta, setMeta] = useState<LayerMeta | null>(null);
