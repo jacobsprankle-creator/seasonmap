@@ -55,9 +55,11 @@ function decodeGrid(qg: QueryGrid): Int16Array {
   return new Int16Array(bytes.buffer);
 }
 
-async function getGrid(env: Env, layer: string, date: string) {
-  const qg = await getJson<QueryGrid>(env, `query/${layer}/${date}.json`);
-  const key = `dec:${layer}:${date}`;
+async function getGrid(env: Env, layer: string, date: string, run?: string) {
+  // Streamed layers store run-scoped grids: query/{layer}/{run}/{date}.json
+  const path = run ? `query/${layer}/${run}/${date}.json` : `query/${layer}/${date}.json`;
+  const qg = await getJson<QueryGrid>(env, path);
+  const key = `dec:${layer}:${run ?? ""}:${date}`;
   let raw = cache.get(key) as Int16Array | undefined;
   if (!raw) {
     raw = decodeGrid(qg);
@@ -69,9 +71,12 @@ async function getGrid(env: Env, layer: string, date: string) {
 export function resolveDate(meta: LayerMeta, date?: string): string {
   if (date && meta.dates.includes(date)) return date;
   if (date && meta.dates.length) {
+    // Hourly layers key frames as "YYYY-MM-DDTHHMM" — a day-only date
+    // resolves to that day's midday frame.
+    const probe = (meta as any).hourly && date.length === 10 ? `${date}T1200` : date;
     const sorted = [...meta.dates].sort();
-    if (date < sorted[0]) return sorted[0];
-    const before = sorted.filter((d) => d <= date);
+    if (probe < sorted[0]) return sorted[0];
+    const before = sorted.filter((d) => d <= probe);
     return before[before.length - 1] ?? sorted[sorted.length - 1];
   }
   return meta.latest ?? meta.dates[meta.dates.length - 1];
@@ -152,7 +157,7 @@ export async function getConditions(
 ): Promise<ToolOutcome> {
   const meta = await getMeta(env, args.layer);
   const date = resolveDate(meta, args.date);
-  const { qg, raw } = await getGrid(env, args.layer, date);
+  const { qg, raw } = await getGrid(env, args.layer, date, (meta as any).run);
   const [row, col] = cellFor(qg, args.lat, args.lon);
   let value = cellValue(qg, raw, row, col);
   let note: string | undefined;
@@ -200,7 +205,7 @@ export async function findPeak(
 ): Promise<ToolOutcome> {
   const meta = await getMeta(env, args.layer);
   const date = resolveDate(meta, args.date);
-  const { qg, raw } = await getGrid(env, args.layer, date);
+  const { qg, raw } = await getGrid(env, args.layer, date, (meta as any).run);
   const [h, w] = qg.shape;
   const mode = args.mode ?? "max";
   const [bw, bs, be, bn] = args.bbox ?? [-125.1, 24, -66.4, 50];
@@ -253,7 +258,7 @@ export async function driveTimeSearch(
 ): Promise<ToolOutcome> {
   const meta = await getMeta(env, args.layer);
   const date = resolveDate(meta, args.date);
-  const { qg, raw } = await getGrid(env, args.layer, date);
+  const { qg, raw } = await getGrid(env, args.layer, date, (meta as any).run);
   const [h, w] = qg.shape;
 
   // Sensible per-layer defaults for "worth driving to".
@@ -374,7 +379,7 @@ export async function layerFeatures(
 export async function getLayerSummary(env: Env, args: { layer: string }): Promise<ToolOutcome> {
   const meta = await getMeta(env, args.layer);
   const date = resolveDate(meta);
-  const { qg, raw } = await getGrid(env, args.layer, date);
+  const { qg, raw } = await getGrid(env, args.layer, date, (meta as any).run);
   const [h, w] = qg.shape;
   const regions: Record<string, { sum: number; n: number }> = {};
   for (let row = 0; row < h; row++) {

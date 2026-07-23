@@ -60,6 +60,18 @@ class LocalPublisher:
         p = self.root / key
         return p.read_bytes() if p.exists() else None
 
+    def list_keys(self, prefix: str) -> List[str]:
+        base = self.root / prefix
+        if not base.exists():
+            return []
+        return [str(p.relative_to(self.root)) for p in base.rglob("*") if p.is_file()]
+
+    def delete_prefix(self, prefix: str) -> int:
+        keys = self.list_keys(prefix)
+        for k in keys:
+            (self.root / k).unlink()
+        return len(keys)
+
 
 class R2Publisher:
     def __init__(self):
@@ -96,6 +108,23 @@ class R2Publisher:
             return resp["Body"].read()
         except self.client.exceptions.NoSuchKey:
             return None
+
+    def list_keys(self, prefix: str) -> List[str]:
+        keys: List[str] = []
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            keys.extend(o["Key"] for o in page.get("Contents", []))
+        return keys
+
+    def delete_prefix(self, prefix: str) -> int:
+        """Delete every object under a prefix (batched). Used to prune old runs."""
+        keys = self.list_keys(prefix)
+        for i in range(0, len(keys), 1000):
+            self.client.delete_objects(
+                Bucket=self.bucket,
+                Delete={"Objects": [{"Key": k} for k in keys[i : i + 1000]], "Quiet": True},
+            )
+        return len(keys)
 
 
 def get_publisher(out_dir: Optional[str] = None):

@@ -43,9 +43,10 @@ def _key() -> str:
 
 CONTOURS = {"mslp": 4.0, "z500": 6.0, "w250": 20.0}  # hPa / dam / mph
 
-# Families with the hourly motion product (S3-sourced). HRRR/GEM stay daily
-# until their S3 paths land.
-HOURLY = {"gfs", "euro", "ukmet", "icon"}
+# The motion trio ({m}_tmax / {m}_precip3 / {m}_sfc) is owned by the live
+# streamer (pipeline/stream.py) for ALL families — nightly no longer renders
+# those slugs. This set gates them out of MODULES.
+STREAMED = {"gfs", "hrrr", "euro", "ukmet", "icon", "gem"}
 
 
 def _hourly(model_id: str):
@@ -165,14 +166,5 @@ MODULES = [
     _make(ms, mid, ml, p)
     for ms, mid, ml, subset in MODELS
     for p in PARAMS
-    if (subset is None or p[0] in subset) and not (ms in HOURLY and p[0] == "tmax")
-] + [
-    _make_sfc(ms, mid, ml)
-    for ms, mid, ml, subset in MODELS
-    if (subset is None or "sfc" in subset) and ms not in HOURLY
-] + [
-    _make_hourly(ms, mid, ml, kind)
-    for ms, mid, ml, subset in MODELS
-    if ms in HOURLY
-    for kind in ("sfc", "temp", "precip3")
+    if (subset is None or p[0] in subset) and not (ms in STREAMED and p[0] == "tmax")
 ]

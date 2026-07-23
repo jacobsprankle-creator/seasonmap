@@ -148,12 +148,19 @@ export default function App() {
 
   const isVector = meta?.type === "vector";
   const hourly = !!(meta as any)?.hourly && (meta?.dates.length ?? 0) > 12;
+  // Streamed layers publish run-scoped tiles: the template carries a {run}
+  // token resolved from meta.run (date-keyed layers pass through unchanged).
+  const resolveTiles = useCallback(
+    (m: NonNullable<typeof meta>, d: string) =>
+      `${DATA_BASE}/${m.tiles.replace("{run}", (m as any).run ?? "").replace("{date}", d)}`,
+    []
+  );
   const frameUrls = useMemo(
     () =>
       hourly && meta
-        ? meta.dates.map((d) => `${DATA_BASE}/${meta.tiles.replace("{date}", d)}`)
+        ? meta.dates.map((d) => resolveTiles(meta, d))
         : null,
-    [hourly, meta]
+    [hourly, meta, resolveTiles]
   );
   const frameIndex = hourly && meta && date ? Math.max(0, meta.dates.indexOf(date)) : 0;
   const [framePlaying, setFramePlaying] = useState(false);
@@ -170,7 +177,7 @@ export default function App() {
   }, [framePlaying, hourly, meta]);
   const tilesUrl =
     meta && date && !isVector && !hourly
-      ? `${DATA_BASE}/${meta.tiles.replace("{date}", date)}`
+      ? resolveTiles(meta, date)
       : null;
   const vector = externalVec
     ? {

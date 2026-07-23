@@ -88,23 +88,25 @@ jobs:
           # identical at synoptic scale and 16× cheaper to render than zoom 7
           # (run #8 post-mortem: groups fetched fine, then timed out rendering
           # 192 full pyramids).
+          # The motion trio (tmax/precip3/sfc) is streamed live by
+          # models-live.yml — nightly renders only the daily parameters.
           - group: models-a
-            layers: gfs_sfc,gfs_precip3,gfs_precip24,gfs_tmax,gfs_precip,gfs_snow,gfs_mslp,gfs_z500,gfs_w250,gfs_gusts,gfs_cape,hrrr_sfc,hrrr_precip24,hrrr_tmax,hrrr_precip,hrrr_snow,hrrr_mslp,hrrr_gusts,hrrr_cape
+            layers: gfs_precip24,gfs_precip,gfs_snow,gfs_mslp,gfs_z500,gfs_w250,gfs_gusts,gfs_cape,hrrr_precip24,hrrr_precip,hrrr_snow,hrrr_mslp,hrrr_gusts,hrrr_cape
             model_group: gfs_seamless,gfs_hrrr
             maxzoom: 5
             timeout: 55
           - group: models-b
-            layers: euro_sfc,euro_precip3,euro_precip24,euro_tmax,euro_precip,euro_snow,euro_mslp,euro_z500,euro_w250,euro_gusts,euro_cape
+            layers: euro_precip24,euro_precip,euro_snow,euro_mslp,euro_z500,euro_w250,euro_gusts,euro_cape
             model_group: ecmwf_ifs025
             maxzoom: 5
             timeout: 55
           - group: models-c
-            layers: ukmet_sfc,ukmet_precip3,ukmet_precip24,ukmet_tmax,ukmet_precip,ukmet_snow,ukmet_mslp,ukmet_z500,ukmet_w250,ukmet_gusts,ukmet_cape,gem_sfc,gem_precip24,gem_tmax,gem_precip,gem_snow,gem_mslp,gem_z500,gem_w250,gem_gusts,gem_cape
+            layers: ukmet_precip24,ukmet_precip,ukmet_snow,ukmet_mslp,ukmet_z500,ukmet_w250,ukmet_gusts,ukmet_cape,gem_precip24,gem_precip,gem_snow,gem_mslp,gem_z500,gem_w250,gem_gusts,gem_cape
             model_group: ukmo_seamless,gem_seamless
             maxzoom: 5
             timeout: 55
           - group: models-d
-            layers: icon_sfc,icon_precip3,icon_precip24,icon_tmax,icon_precip,icon_snow,icon_mslp,icon_z500,icon_w250,icon_gusts,icon_cape
+            layers: icon_precip24,icon_precip,icon_snow,icon_mslp,icon_z500,icon_w250,icon_gusts,icon_cape
             model_group: icon_seamless
             maxzoom: 5
             timeout: 55

@@ -51,11 +51,18 @@ Gridded (get_conditions etc.):
   get_layer_summary) and report the window where stage reaches 4.
 - leafout / leafout_bloom — spring first-leaf / first-bloom day-of-year
   (USA-NPN, current year); weekly Feb–Jun dates progressively reveal arrival.
-- forecast models — prefixes gfs_, euro_, hrrr_ (48h CONUS mesoscale),
-  ukmet_, icon_, gem_; fields {model}_tmax °F, {model}_precip accumulated in,
-  {model}_snow accumulated in, {model}_mslp hPa 12Z, and (except hrrr)
-  {model}_z500 dam 12Z + {model}_w250 jet mph 12Z. Dates are lead times.
-  Model-comparison questions → query several models at the same point/date.
+- forecast models — prefixes gfs_, euro_, hrrr_ (3km CONUS mesoscale),
+  ukmet_, icon_, gem_. LIVE hourly motion layers for EVERY model, streamed
+  as frames land on the model's data feed: {model}_tmax 2-m temperature °F,
+  {model}_precip3 per-step precipitation in, {model}_sfc surface map (MSLP
+  isobars over step precip — point queries return the precip fill). Hourly
+  dates are ISO hours like "2026-07-23T1500" (UTC); a day-only date resolves
+  to that day's midday frame automatically.
+  Daily layers: {model}_precip total accumulated in, {model}_precip24 24-h
+  bucket in, {model}_snow accumulated in, {model}_mslp hPa 12Z, and (except
+  hrrr) {model}_z500 dam 12Z + {model}_w250 jet mph 12Z — their dates are
+  lead-time days. Model-comparison questions → query several models at the
+  same point/date.
 - {model}_gusts peak gusts mph and {model}_cape daily-max CAPE J/kg exist for
   every model too.
 - air_aqi / air_pm25 / air_smoke — current US AQI, PM2.5 µg/m³, aerosol
