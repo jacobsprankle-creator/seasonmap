@@ -147,8 +147,29 @@ export default function App() {
   );
 
   const isVector = meta?.type === "vector";
+  const hourly = !!(meta as any)?.hourly && (meta?.dates.length ?? 0) > 12;
+  const frameUrls = useMemo(
+    () =>
+      hourly && meta
+        ? meta.dates.map((d) => `${DATA_BASE}/${meta.tiles.replace("{date}", d)}`)
+        : null,
+    [hourly, meta]
+  );
+  const frameIndex = hourly && meta && date ? Math.max(0, meta.dates.indexOf(date)) : 0;
+  const [framePlaying, setFramePlaying] = useState(false);
+  useEffect(() => setFramePlaying(false), [layerId]);
+  useEffect(() => {
+    if (!framePlaying || !hourly || !meta) return;
+    const t = setInterval(() => {
+      setDate((d) => {
+        const i = d ? meta.dates.indexOf(d) : 0;
+        return meta.dates[(i + 1) % meta.dates.length];
+      });
+    }, 320);
+    return () => clearInterval(t);
+  }, [framePlaying, hourly, meta]);
   const tilesUrl =
-    meta && date && !isVector
+    meta && date && !isVector && !hourly
       ? `${DATA_BASE}/${meta.tiles.replace("{date}", date)}`
       : null;
   const vector = externalVec
@@ -222,6 +243,8 @@ export default function App() {
           animFrame={animFrame}
           rasterOpacity={(meta as any)?.opacity}
           maxzoom={meta?.maxzoom ?? 7}
+          frameUrls={frameUrls}
+          frameIndex={frameIndex}
           initialView={initial}
           onViewChange={onViewChange}
           sample={sample}
@@ -289,7 +312,13 @@ export default function App() {
           />
         )}
         {meta && date && (
-          <DateSlider dates={meta.dates} value={date} onChange={setDate} />
+          <DateSlider
+            dates={meta.dates}
+            value={date}
+            onChange={(d) => { setFramePlaying(false); setDate(d); }}
+            playing={hourly ? framePlaying : undefined}
+            onPlayToggle={hourly ? () => setFramePlaying((p) => !p) : undefined}
+          />
         )}
         {animFrames && (
           <div className="radar-control">
@@ -322,6 +351,9 @@ export default function App() {
         {(meta || external || externalVec) && (
           <div className="meta-caption">
             {external ? external.caption : externalVec ? externalVec.caption : meta!.description}
+            {(meta as any)?.model_run
+              ? ` · init ${(meta as any).model_run} (${new Date((meta as any).model_run.replace("Z", ":00Z")).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })} local)`
+              : ""}
             {!external && !externalVec && meta!.dates.length < 2 ? " · updated nightly" : ""}
           </div>
         )}

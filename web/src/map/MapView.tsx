@@ -78,6 +78,10 @@ interface Props {
   animFrame?: number;
   rasterOpacity?: number;
   maxzoom: number;
+  /** Hourly player: every frame's PMTiles URL + the current frame index.
+   *  Frames mount progressively as GPU layers; scrubbing flips opacity. */
+  frameUrls?: string[] | null;
+  frameIndex?: number;
   initialView: { zoom?: number; center?: [number, number] };
   onViewChange: (zoom: number, center: [number, number]) => void;
   sample?: (lng: number, lat: number) => Promise<string>;
@@ -85,7 +89,7 @@ interface Props {
   onClickInfo?: (info: { lat: number; lng: number; feature: Record<string, unknown> | null }) => void;
 }
 
-export function MapView({ tilesUrl, vector, external, featureFilter, viewport = "conus", animFrames = null, animFrame = 5, rasterOpacity, maxzoom, initialView, onViewChange, sample, pins, onClickInfo }: Props) {
+export function MapView({ tilesUrl, vector, external, featureFilter, viewport = "conus", animFrames = null, animFrame = 5, rasterOpacity, maxzoom, frameUrls = null, frameIndex = 0, initialView, onViewChange, sample, pins, onClickInfo }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<MLMap | null>(null);
   const [styleReady, setStyleReady] = useState(false);
@@ -403,7 +407,68 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
     };
   }, [map, styleReady, tilesUrl, maxzoom, external, rasterOpacity]);
 
-  // Vector overlay (storm tracks): GeoJSON source + data-driven color,
+  // ── Hourly frame player ─────────────────────────────────────────────
+  // Windowed preload: mount frames around the current index as opacity-0
+  // raster layers (they fetch their viewport tiles immediately), then
+  // scrubbing = a GPU opacity flip — zero network, Windy-style. The window
+  // expands outward on a timer until the whole timeline is buffered.
+  const framesMounted = useRef<Set<number>>(new Set());
+  const frameKey = frameUrls ? `${frameUrls.length}:${frameUrls[0]}` : "";
+  useEffect(() => {
+    if (!map || !styleReady) return;
+    const clearAll = () => {
+      framesMounted.current.forEach((i) => {
+        if (map.getLayer(`hf-${i}`)) map.removeLayer(`hf-${i}`);
+        if (map.getSource(`hf-src-${i}`)) {
+          try { map.removeSource(`hf-src-${i}`); } catch { /* */ }
+        }
+      });
+      framesMounted.current = new Set();
+    };
+    if (!frameUrls || !frameUrls.length) { clearAll(); return; }
+    clearAll();
+    const mount = (i: number) => {
+      if (i < 0 || i >= frameUrls.length || framesMounted.current.has(i)) return;
+      map.addSource(`hf-src-${i}`, { type: "raster", url: `pmtiles://${frameUrls[i]}`, tileSize: 256, maxzoom });
+      map.addLayer({
+        id: `hf-${i}`, type: "raster", source: `hf-src-${i}`,
+        paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-resampling": "linear" },
+      });
+      framesMounted.current.add(i);
+    };
+    // seed around the current frame, then buffer outward
+    for (let d = 0; d <= 3; d++) { mount(frameIndex + d); mount(frameIndex - d); }
+    if (map.getLayer(`hf-${frameIndex}`))
+      map.setPaintProperty(`hf-${frameIndex}`, "raster-opacity", rasterOpacity ?? 0.72);
+    let radius = 4;
+    const t = window.setInterval(() => {
+      mount(frameIndex + radius); mount(frameIndex - radius);
+      radius += 1;
+      if (framesMounted.current.size >= frameUrls.length) window.clearInterval(t);
+    }, 350);
+    return () => { window.clearInterval(t); clearAll(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, styleReady, frameKey]);
+
+  useEffect(() => {
+    if (!map || !styleReady || !frameUrls) return;
+    if (!framesMounted.current.has(frameIndex)) {
+      // scrubbed past the buffer — mount on demand
+      if (frameIndex >= 0 && frameIndex < frameUrls.length && !map.getSource(`hf-src-${frameIndex}`)) {
+        map.addSource(`hf-src-${frameIndex}`, { type: "raster", url: `pmtiles://${frameUrls[frameIndex]}`, tileSize: 256, maxzoom });
+        map.addLayer({ id: `hf-${frameIndex}`, type: "raster", source: `hf-src-${frameIndex}`,
+          paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-resampling": "linear" } });
+        framesMounted.current.add(frameIndex);
+      }
+    }
+    framesMounted.current.forEach((i) => {
+      if (map.getLayer(`hf-${i}`))
+        map.setPaintProperty(`hf-${i}`, "raster-opacity", i === frameIndex ? (rasterOpacity ?? 0.72) : 0);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, styleReady, frameKey, frameIndex, rasterOpacity]);
+
+    // Vector overlay (storm tracks): GeoJSON source + data-driven color,
   // rendered as three geometry-typed sublayers.
   useEffect(() => {
     if (!map || !styleReady) return;

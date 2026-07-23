@@ -2,39 +2,65 @@ interface Props {
   dates: string[];
   value: string;
   onChange: (date: string) => void;
+  /** Hourly player: show a play button and hour-resolution labels. */
+  playing?: boolean;
+  onPlayToggle?: () => void;
 }
 
-function relativeLabel(date: string): string {
-  const today = new Date();
-  const target = new Date(`${date}T12:00:00`);
+/** "YYYY-MM-DDTHHMM" (hourly frame) or "YYYY-MM-DD" (daily). */
+export function parseFrame(key: string): Date {
+  if (key.length > 10) {
+    return new Date(
+      `${key.slice(0, 10)}T${key.slice(11, 13)}:${key.slice(13, 15) || "00"}:00Z`
+    );
+  }
+  return new Date(`${key}T12:00:00`);
+}
+
+function label(key: string): { main: string; rel: string } {
+  const t = parseFrame(key);
+  if (key.length > 10) {
+    const main = t.toLocaleString(undefined, {
+      weekday: "short",
+      hour: "numeric",
+      minute: t.getMinutes() ? "2-digit" : undefined,
+    });
+    const hrs = Math.round((t.getTime() - Date.now()) / 3600000);
+    return { main, rel: hrs === 0 ? "now" : hrs > 0 ? `+${hrs}h` : `${hrs}h` };
+  }
   const days = Math.round(
-    (target.getTime() - new Date(today.toDateString()).getTime()) / 86400000
+    (t.getTime() - new Date(new Date().toDateString()).getTime()) / 86400000
   );
-  if (days === 0) return "today";
-  if (days === 1) return "tomorrow";
-  if (days === -1) return "yesterday";
-  if (days > 1 && days <= 10) return `+${days}d forecast`;
-  if (days < 0) return `${days}d`;
-  return `+${Math.round(days / 7)}w outlook`;
+  const rel =
+    days === 0 ? "today" : days === 1 ? "tomorrow" : days === -1 ? "yesterday"
+    : days > 1 && days <= 10 ? `+${days}d forecast`
+    : days < 0 ? `${days}d` : `+${Math.round(days / 7)}w outlook`;
+  return { main: key, rel };
 }
 
-export function DateSlider({ dates, value, onChange }: Props) {
+export function DateSlider({ dates, value, onChange, playing, onPlayToggle }: Props) {
   // A slider with one position is noise — static layers just don't get one.
   if (dates.length < 2) return null;
   const idx = Math.max(0, dates.indexOf(value));
+  const l = label(value);
   return (
     <div className="date-slider">
+      {onPlayToggle && (
+        <button className="radar-play" onClick={onPlayToggle} aria-label={playing ? "Pause" : "Play"}>
+          {playing ? "⏸" : "▶"}
+        </button>
+      )}
       <input
         type="range"
         min={0}
         max={dates.length - 1}
         step={1}
         value={idx}
-        aria-label="Date"
+        aria-label="Time"
         onChange={(e) => onChange(dates[Number(e.target.value)])}
       />
       <output>
-        {value} <span className="date-rel">{relativeLabel(value)}</span>
+        {l.main} <span className="date-rel">{l.rel}</span>
       </output>
     </div>
   );
