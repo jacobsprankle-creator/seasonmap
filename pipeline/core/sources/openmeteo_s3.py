@@ -394,3 +394,82 @@ def _fetch_family(mid: str) -> Tuple[List[str], Dict[str, np.ndarray]]:
         return dates, out
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Air quality (CAMS) + waves (GFS-Wave) — same S3 machinery, no HTTP API.
+# ---------------------------------------------------------------------------
+
+_PM25_C = [0.0, 12.0, 35.4, 55.4, 150.4, 250.4, 500.4]
+_PM25_I = [0.0, 50.0, 100.0, 150.0, 200.0, 300.0, 500.0]
+_O3_C = [0.0, 54.0, 70.0, 85.0, 105.0, 200.0]  # ppb
+_O3_I = [0.0, 50.0, 100.0, 150.0, 200.0, 300.0]
+
+
+def _now_field(v: "_Var") -> np.ndarray:
+    """The timestep nearest to now (UTC) from a variable cube."""
+    now = np.datetime64(dt.datetime.utcnow().replace(microsecond=0))
+    idx = int(np.abs(v.times - now).argmin())
+    cube = v.conus()
+    return cube[min(idx, cube.shape[0] - 1)]
+
+
+def _fetch_domain(domain: str, want: List[str]) -> Dict[str, "_Var"]:
+    s3c = _s3()
+    _, run_prefix, present = _pick_run(s3c, domain, want)
+    tmpdir = tempfile.mkdtemp(prefix=f"oms3-{domain[:8]}-")
+    out: Dict[str, _Var] = {}
+    ascending: Optional[bool] = None
+    for v in want:
+        if v not in present:
+            continue
+        path = os.path.join(tmpdir, f"{v}.om")
+        s3c.download_file(BUCKET, f"{run_prefix}{v}.om", path)
+        out[v] = _Var(path, ascending=ascending)
+        ascending = out[v].ascending
+    out["__tmpdir__"] = tmpdir  # type: ignore[assignment]
+    return out
+
+
+def fetch_air_now() -> Dict[str, np.ndarray]:
+    """Current us_aqi / pm2_5 / aerosol_optical_depth on the canonical grid.
+
+    AQI = max of the EPA PM2.5 and ozone sub-indices (piecewise-linear via
+    np.interp on the official breakpoints; instantaneous concentrations, the
+    same approximation the HTTP API's `us_aqi` makes).
+    """
+    vs = _fetch_domain("cams_global", ["pm2_5", "aerosol_optical_depth", "ozone"])
+    try:
+        pm_v = vs["pm2_5"]
+        pm = _now_field(pm_v)
+        aod = _now_field(vs["aerosol_optical_depth"])
+        oz_ppb = _now_field(vs["ozone"]) / 1.962 if "ozone" in vs else None
+        aqi = np.interp(pm, _PM25_C, _PM25_I)
+        if oz_ppb is not None:
+            aqi = np.fmax(aqi, np.interp(oz_ppb, _O3_C, _O3_I))
+        return {
+            "us_aqi": pm_v.to_canonical(aqi.astype(np.float32)),
+            "pm2_5": pm_v.to_canonical(pm),
+            "aerosol_optical_depth": pm_v.to_canonical(aod),
+        }
+    finally:
+        shutil.rmtree(vs.pop("__tmpdir__"), ignore_errors=True)  # type: ignore[arg-type]
+
+
+def fetch_waves_daily() -> Tuple[List[str], np.ndarray]:
+    """(dates8, (8,H,W) daily-max wave height in feet). Land stays NODATA."""
+    vs = _fetch_domain("ncep_gfswave025", ["wave_height"])
+    try:
+        v = vs["wave_height"]
+        cube = v.conus() * 3.28084  # m -> ft
+        days = v.times.astype("datetime64[D]")
+        first = v.times[0].astype("datetime64[D]")
+        dates = [str(first + np.timedelta64(d, "D")) for d in range(8)]
+        stack = np.full((8,) + grid.SHAPE, grid.NODATA, dtype=np.float32)
+        for i, d in enumerate(dates):
+            idx = np.where(days == np.datetime64(d))[0]
+            if idx.size:
+                stack[i] = v.to_canonical(np.nanmax(cube[idx], axis=0))
+        return dates, stack
+    finally:
+        shutil.rmtree(vs.pop("__tmpdir__"), ignore_errors=True)  # type: ignore[arg-type]

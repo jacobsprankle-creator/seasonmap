@@ -6,7 +6,7 @@ name: hourly-conditions
 # frontend reads those live feeds directly.
 on:
   schedule:
-    - cron: "8 * * * *"
+    - cron: "23 * * * *"
   workflow_dispatch:
 
 env:

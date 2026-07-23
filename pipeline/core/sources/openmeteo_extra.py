@@ -80,6 +80,18 @@ def fetch_air_quality(run_key: str) -> Dict[str, np.ndarray]:
         _memo[f"air:{run_key}"] = fields
         return fields
 
+    try:
+        from . import openmeteo_s3
+
+        fields = openmeteo_s3.fetch_air_now()
+        import numpy as _np
+
+        _np.savez_compressed(disk, **fields)
+        _memo[f"air:{run_key}"] = fields
+        return fields
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [air-source] s3 failed ({exc}); falling back to API", flush=True)
+
     def parse(state, idx, res):
         cur = res.get("current", {})
         if "vals" not in state:
@@ -107,6 +119,18 @@ def fetch_waves(run_key: str) -> Tuple[List[str], np.ndarray]:
         result = ([str(s) for s in z["dates"]], z["waves"])
         _memo[f"marine:{run_key}"] = result
         return result
+
+    try:
+        from . import openmeteo_s3
+
+        result = openmeteo_s3.fetch_waves_daily()
+        import numpy as _np
+
+        _np.savez_compressed(disk, dates=_np.array(result[0]), waves=result[1])
+        _memo[f"marine:{run_key}"] = result
+        return result
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [waves-source] s3 failed ({exc}); falling back to API", flush=True)
 
     def parse(state, idx, res):
         daily = res.get("daily", {})
