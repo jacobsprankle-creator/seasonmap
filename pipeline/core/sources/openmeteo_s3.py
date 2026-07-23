@@ -286,7 +286,8 @@ def fetch_models_batch(model_ids: List[str], run_key: str) -> Dict[str, tuple]:
         disk = static_dir() / f"openmeteo_s3_{mid}_{run_key}.npz"
         if disk.exists():
             z = np.load(disk)
-            results[mid] = ([str(s) for s in z["dates"]], {k: z[k] for k in PARAM_KEYS})
+            fields = {k: z[k] for k in z.files if k != "dates"}
+            results[mid] = ([str(x) for x in z["dates"]], fields)
             continue
         dates, fields = _fetch_family(mid)
         np.savez_compressed(disk, dates=np.array(dates), **fields)
@@ -403,6 +404,46 @@ def _fetch_family(mid: str) -> Tuple[List[str], Dict[str, np.ndarray]]:
                     if idx.size:
                         frames[i] = ref.to_canonical(_convert(param, ref.unit, cube[idx[0]]))
             out[param] = frames
+
+        # ── Hourly motion product (sfc/temp/precip3h player frames) ──────
+        # 46 native steps: 3-hourly to +84 h, 6-hourly to +192 h. Extracted
+        # from the SAME downloaded files; stored alongside the daily fields.
+        try:
+            t_v = var_of("sfc", "temperature_2m")
+            p_v = var_of("sfc", "precipitation")
+            m_role = "prs" if "prs" in cfg["domains"] else "sfc"
+            m_v = var_of(m_role, "pressure_msl")
+            if t_v is not None and p_v is not None and m_v is not None:
+                step_hours = list(range(3, 85, 3)) + list(range(90, 193, 6))
+                targets = [run_start + dt.timedelta(hours=h) for h in step_hours]
+                t_cube, t_times = t_v.conus(), t_v.times
+                p_cube, p_times = p_v.conus(), p_v.times
+                m_cube, m_times = m_v.conus(), m_v.times
+                h_keys: List[str] = []
+                h_temp, h_p3, h_mslp = [], [], []
+                prev_t = run_start
+                for tt in targets:
+                    t64 = np.datetime64(tt)
+                    ti = np.where(t_times == t64)[0]
+                    mi = np.where(m_times == t64)[0]
+                    pi = np.where((p_times > np.datetime64(prev_t)) & (p_times <= t64))[0]
+                    if not (ti.size and mi.size and pi.size):
+                        prev_t = tt
+                        continue
+                    h_keys.append(tt.strftime("%Y-%m-%dT%H%M"))
+                    h_temp.append(t_v.to_canonical(_convert("tmax", t_v.unit, t_cube[ti[0]])))
+                    h_p3.append(p_v.to_canonical(
+                        _convert("precip_24h", p_v.unit, np.nansum(np.nan_to_num(p_cube[pi]), axis=0))))
+                    h_mslp.append(m_v.to_canonical(m_cube[mi[0]]))
+                    prev_t = tt
+                if h_keys:
+                    out["h_times"] = np.array(h_keys)
+                    out["h_temp"] = np.stack(h_temp).astype(np.float32)
+                    out["h_precip3"] = np.stack(h_p3).astype(np.float32)
+                    out["h_mslp"] = np.stack(h_mslp).astype(np.float32)
+        except Exception as exc:  # noqa: BLE001 — hourly is additive, never fatal
+            print(f"  [hourly] extraction skipped for {mid}: {exc}", flush=True)
+        out["run_stamp"] = np.array(run_start.strftime("%Y-%m-%dT%H:%MZ"))
         return dates, out
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -485,3 +526,17 @@ def fetch_waves_daily() -> Tuple[List[str], np.ndarray]:
         return dates, stack
     finally:
         shutil.rmtree(vs.pop("__tmpdir__"), ignore_errors=True)  # type: ignore[arg-type]
+
+
+def fetch_model_hourly(mid: str, run_key: str):
+    """(hour_keys, {"temp"/"precip3"/"mslp": (T,H,W)}, run_stamp) for the
+    motion player. Raises when the family has no hourly product (API-fallback
+    families) — callers treat that as 'daily only'."""
+    _dates, fields = fetch_models_batch([mid], run_key)[mid]
+    if "h_times" not in fields:
+        raise RuntimeError(f"{mid}: no hourly product")
+    return (
+        [str(x) for x in fields["h_times"]],
+        {"temp": fields["h_temp"], "precip3": fields["h_precip3"], "mslp": fields["h_mslp"]},
+        str(fields.get("run_stamp", "")),
+    )

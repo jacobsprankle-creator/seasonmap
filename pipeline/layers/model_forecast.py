@@ -43,6 +43,52 @@ def _key() -> str:
 
 CONTOURS = {"mslp": 4.0, "z500": 6.0, "w250": 20.0}  # hPa / dam / mph
 
+# Families with the hourly motion product (S3-sourced). HRRR/GEM stay daily
+# until their S3 paths land.
+HOURLY = {"gfs", "euro", "ukmet", "icon"}
+
+
+def _hourly(model_id: str):
+    from ..core.sources import openmeteo_s3
+
+    return openmeteo_s3.fetch_model_hourly(model_id, _key())
+
+
+def _make_hourly(model_slug: str, model_id: str, model_label: str, kind: str):
+    """kind: sfc (precip3h fill + MSLP isobars) · temp · precip3."""
+    slug = f"{model_slug}_{'sfc' if kind == 'sfc' else 'tmax' if kind == 'temp' else 'precip3'}"
+
+    def dates_for(run_date: str) -> List[str]:
+        keys, _, _ = _hourly(model_id)
+        return keys
+
+    def score(date: str) -> LayerOutput:
+        keys, fields, run_stamp = _hourly(model_id)
+        i = keys.index(date)
+        land = ensure_tmin_normals()[0] != grid.NODATA
+        meta = {"value_format": "number", "opacity": 0.66, "model_run": run_stamp, "hourly": True}
+        if kind == "temp":
+            values = fields["temp"][i].copy()
+            values[~land] = grid.NODATA
+            return LayerOutput(slug, date, values, "temp_f", -10, 110, "°F",
+                               f"{model_label} 2-m temperature — hourly player", extra_meta=meta)
+        values = fields["precip3"][i].copy()
+        values[~land] = grid.NODATA
+        if kind == "precip3":
+            return LayerOutput(slug, date, values, "precip_in_step", 0, 1.5, "in",
+                               f"{model_label} 3-hourly precipitation — hourly player", extra_meta=meta)
+        return LayerOutput(slug, date, values, "precip_in_step", 0, 1.5, "in",
+                           f"{model_label} surface map — MSLP isobars over 3-h precip (hourly player)",
+                           extra_meta=meta, contour_interval=4.0,
+                           contour_values=fields["mslp"][i].copy())
+
+    ns = type(slug, (), {})
+    ns.LAYER = slug
+    ns.IMPLEMENTED = True
+    ns.dates_for = staticmethod(dates_for)
+    ns.score = staticmethod(score)
+    return ns
+
 
 def _make(model_slug: str, model_id: str, model_label: str, p):
     suffix, field, cmap, vmin, vmax, units, label, mask_land = p
@@ -119,9 +165,14 @@ MODULES = [
     _make(ms, mid, ml, p)
     for ms, mid, ml, subset in MODELS
     for p in PARAMS
-    if subset is None or p[0] in subset
+    if (subset is None or p[0] in subset) and not (ms in HOURLY and p[0] == "tmax")
 ] + [
     _make_sfc(ms, mid, ml)
     for ms, mid, ml, subset in MODELS
-    if subset is None or "sfc" in subset
+    if (subset is None or "sfc" in subset) and ms not in HOURLY
+] + [
+    _make_hourly(ms, mid, ml, kind)
+    for ms, mid, ml, subset in MODELS
+    if ms in HOURLY
+    for kind in ("sfc", "temp", "precip3")
 ]
