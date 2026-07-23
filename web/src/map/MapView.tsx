@@ -163,6 +163,53 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       );
 
       const popup = new maplibregl.Popup({ closeButton: true, closeOnClick: false });
+
+      // --- Interaction feel ---------------------------------------------
+      // Proximity hover: features light up when the cursor is NEAR them
+      // (±8 px), not only when it's pixel-perfect on a 4 px dot. rAF-throttled.
+      let hoverId: number | string | undefined;
+      let selectedId: number | string | undefined;
+      const setState = (id: number | string | undefined, key: "hover" | "selected", prev: number | string | undefined) => {
+        if (!m.getSource(VECTOR_SOURCE)) return prev;
+        try {
+          if (prev !== undefined && prev !== id)
+            m.setFeatureState({ source: VECTOR_SOURCE, id: prev }, { [key]: false });
+          if (id !== undefined)
+            m.setFeatureState({ source: VECTOR_SOURCE, id }, { [key]: true });
+        } catch {
+          /* source mid-swap */
+        }
+        return id;
+      };
+      let rafPending = false;
+      let lastMove: maplibregl.MapMouseEvent | null = null;
+      m.on("mousemove", (e) => {
+        lastMove = e;
+        if (rafPending) return;
+        rafPending = true;
+        requestAnimationFrame(() => {
+          rafPending = false;
+          const ev = lastMove;
+          if (!ev) return;
+          const present = VECTOR_LAYERS.filter((id) => m.getLayer(id));
+          if (!present.length) return;
+          const feats = m.queryRenderedFeatures(
+            [
+              [ev.point.x - 8, ev.point.y - 8],
+              [ev.point.x + 8, ev.point.y + 8],
+            ],
+            { layers: present as unknown as string[] }
+          );
+          m.getCanvas().style.cursor = feats.length ? "pointer" : "";
+          hoverId = setState(feats[0]?.id as number | undefined, "hover", hoverId);
+        });
+      });
+      // Clicking a feature marks it "selected" (pops visually) until the
+      // popup closes or the next click lands elsewhere.
+      popup.on("close", () => {
+        selectedId = setState(undefined, "selected", selectedId);
+      });
+
       m.on("click", async (e) => {
         // Vector layers: show the clicked feature's properties.
         const v = vectorRef.current;
@@ -176,6 +223,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
             ],
             { layers: present as unknown as string[] }
           );
+          selectedId = setState(feats[0]?.id as number | undefined, "selected", selectedId);
           if (feats.length) {
             const p = feats[0].properties ?? {};
             clickInfoRef.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng, feature: p });
@@ -335,12 +383,16 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       ...vector.colors.flatMap((c) => [String(c.value), c.color]),
       "#8899aa",
     ];
-    const hovered = (yes: number | any, no: number | any): any => [
+    // Three-tier interaction paint: selected (clicked) > hover (near) > base.
+    const state = (sel: any, hov: any, base: any): any => [
       "case",
+      ["boolean", ["feature-state", "selected"], false],
+      sel,
       ["boolean", ["feature-state", "hover"], false],
-      yes,
-      no,
+      hov,
+      base,
     ];
+    const baseFill = vector.fillOpacity ?? 0.18;
     map.addLayer({
       id: "vec-fill",
       type: "fill",
@@ -348,9 +400,10 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       filter: ["==", ["geometry-type"], "Polygon"],
       paint: {
         "fill-color": colorExpr,
-        "fill-opacity": hovered(
-          Math.min((vector.fillOpacity ?? 0.18) + 0.18, 0.85),
-          vector.fillOpacity ?? 0.18
+        "fill-opacity": state(
+          Math.min(baseFill + 0.3, 0.9),
+          Math.min(baseFill + 0.15, 0.8),
+          baseFill
         ),
       },
     });
@@ -360,7 +413,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       type: "line",
       source: VECTOR_SOURCE,
       filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "line-color": colorExpr, "line-width": hovered(2.6, 1.6), "line-opacity": 0.9 },
+      paint: { "line-color": colorExpr, "line-width": state(3.5, 2.6, 1.6), "line-opacity": 0.9 },
     });
     map.addLayer({
       id: "vec-line",
@@ -369,11 +422,12 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       filter: ["==", ["geometry-type"], "LineString"],
       paint: {
         "line-color": colorExpr,
-        "line-width": hovered(
-          ["interpolate", ["linear"], ["zoom"], 3, 2.5, 6, 4, 9, 6],
+        "line-width": state(
+          ["interpolate", ["linear"], ["zoom"], 3, 3.5, 6, 5.5, 9, 8],
+          ["interpolate", ["linear"], ["zoom"], 3, 2.2, 6, 3.5, 9, 5.5],
           ["interpolate", ["linear"], ["zoom"], 3, 1, 6, 2, 9, 3.5]
         ),
-        "line-opacity": hovered(1, 0.85),
+        "line-opacity": state(1, 1, 0.85),
       },
     });
     const r = vector.circleRadius ?? 8;
@@ -384,40 +438,11 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       filter: ["==", ["geometry-type"], "Point"],
       paint: {
         "circle-color": colorExpr,
-        "circle-radius": hovered(r + 3, r),
-        "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": hovered(2.5, r < 6 ? 1 : 2),
+        "circle-radius": state(r + 5, r + 3, r),
+        "circle-stroke-color": state("#1c2321", "#ffffff", "#ffffff"),
+        "circle-stroke-width": state(3, 2.5, r < 6 ? 1 : 2),
       },
     });
-    // Hover feel: pointer cursor + highlight the feature under the mouse.
-    let hoverId: number | string | undefined;
-    const setHover = (id: number | string | undefined) => {
-      if (id === hoverId) return;
-      if (hoverId !== undefined)
-        map.setFeatureState({ source: VECTOR_SOURCE, id: hoverId }, { hover: false });
-      hoverId = id;
-      if (hoverId !== undefined)
-        map.setFeatureState({ source: VECTOR_SOURCE, id: hoverId }, { hover: true });
-    };
-    const onMove = (e: maplibregl.MapLayerMouseEvent) => {
-      map.getCanvas().style.cursor = "pointer";
-      setHover(e.features?.[0]?.id as number | undefined);
-    };
-    const onLeave = () => {
-      map.getCanvas().style.cursor = "";
-      setHover(undefined);
-    };
-    VECTOR_LAYERS.forEach((id) => {
-      map.on("mousemove", id, onMove);
-      map.on("mouseleave", id, onLeave);
-    });
-    return () => {
-      VECTOR_LAYERS.forEach((id) => {
-        map.off("mousemove", id, onMove);
-        map.off("mouseleave", id, onLeave);
-      });
-      if (map.getCanvas()) map.getCanvas().style.cursor = "";
-    };
   }, [map, styleReady, vector]);
 
   // Animated live layers (radar, satellite): six timestamped frame sources;

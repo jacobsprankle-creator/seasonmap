@@ -173,6 +173,7 @@ html, body, #root { margin: 0; height: 100%; }
   transition: transform 0.12s ease;
 }
 .pin:hover { transform: scale(1.35); }
+.pin:active { transform: scale(1.1); }
 
 .popup { font-size: 12px; max-width: 260px; padding-right: 10px; }
 .maplibregl-popup-close-button {
