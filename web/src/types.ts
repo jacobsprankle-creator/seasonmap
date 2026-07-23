@@ -178,6 +178,7 @@ export const LAYER_DEFS: LayerDef[] = [
     variants: [
       { id: `${id}_sfc`, label: "Sfc", isDefault: true },
       { id: `${id}_tmax`, label: "Temp" },
+      { id: `${id}_precip3`, label: "Precip step" },
       { id: `${id}_precip24`, label: "Precip 24h" },
       { id: `${id}_precip`, label: "Precip Total" },
       { id: `${id}_snow`, label: "Snow" },
