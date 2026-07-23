@@ -10,6 +10,8 @@
 export interface Env {
   ANTHROPIC_API_KEY: string;
   DATA_BASE_URL: string;
+  /** optional: GitHub PAT for the streaming heartbeat (scheduled handler) */
+  GH_DISPATCH_TOKEN?: string;
 }
 
 interface QueryGrid {

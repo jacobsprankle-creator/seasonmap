@@ -473,6 +473,32 @@ const CORS: Record<string, string> = {
 };
 
 export default {
+  /**
+   * Streaming heartbeat. GitHub's own cron scheduler on this repo fires ~2x
+   * a day instead of hourly (observed 09:15Z + 18:02Z for a "23 * * * *"
+   * schedule), so the tick cadence lives HERE: Cloudflare Cron Triggers fire
+   * reliably. Every 30 min this dispatches the models-live workflow, which
+   * diffs S3 against R2 state and publishes only new frames. No-op until the
+   * GH_DISPATCH_TOKEN worker secret is provisioned (deploy syncs it from the
+   * repo secret of the same name).
+   */
+  async scheduled(_event: unknown, env: Env): Promise<void> {
+    if (!env.GH_DISPATCH_TOKEN) return;
+    await fetch(
+      "https://api.github.com/repos/jacobsprankle-creator/seasonmap/actions/workflows/models-live.yml/dispatches",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.GH_DISPATCH_TOKEN}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json",
+          "User-Agent": "seasonmap-heartbeat",
+        },
+        body: JSON.stringify({ ref: "main", inputs: { families: "all" } }),
+      }
+    );
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const inner = await handle(request, env);

@@ -16,3 +16,8 @@ DATA_BASE_URL = "https://pub-e7a8bd47335d4a62afe37eee2bf4733e.r2.dev"
 # Secrets (never in this file):
 #   wrangler secret put ANTHROPIC_API_KEY        # prod
 #   echo 'ANTHROPIC_API_KEY=sk-ant-...' > .dev.vars   # local dev (gitignored)
+
+# Streaming heartbeat — GitHub's cron scheduler proved unreliable on this
+# repo (fires ~2x/day); Cloudflare Cron Triggers do the 30-min cadence.
+[triggers]
+crons = ["7,37 * * * *"]
