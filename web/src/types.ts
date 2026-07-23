@@ -118,61 +118,165 @@ const spcDay = (n: number, isDefault = false) => ({
   },
 });
 
-/** Overlays — thin live layers that stack on TOP of whatever base layer is
- *  active: radar over a model run, alert polygons over foliage, live storm
- *  tracks over water temperature. Multiple overlays can be on at once; the
- *  active set rides the URL (?ov=radar,alerts). Future NODD layers (GLM
- *  lightning, MRMS) slot in as new entries here. */
+/** Overlays — sparse live layers that stack on TOP of whatever base layer
+ *  is active. The design rule: FILLS FIGHT, SPARSE STACKS. Full-bleed raster
+ *  fills (temps, foliage, drought fill) stay single-select bases because two
+ *  opaque fills are unreadable — but anything line/point/outline-shaped
+ *  stacks indefinitely: radar echoes, warning polygons, storm tracks, gauge
+ *  points, outlook outlines. Any number can be on at once; the active set
+ *  rides the URL (?ov=radar,alerts,rivers). New overlays are registry rows —
+ *  GLM lightning and MRMS slot in here when NODD lands. */
 export interface OverlayDef {
   id: string;
   label: string;
-  kind: "raster" | "alerts" | "storms";
-  tiles?: string[];
-  opacity?: number;
-  maxzoom?: number;
-  url?: string;
-  colors?: { value: string; color: string }[];
-  refreshMs?: number;
+  /** rail swatch color */
+  swatch: string;
+  source:
+    | { kind: "tiles"; tiles: string[]; maxzoom?: number; opacity?: number; refreshMs?: number }
+    | { kind: "geojson"; url: string; refreshMs?: number }
+    | { kind: "layerdata"; layers: string[] };
+  style?: {
+    colorProp?: string;
+    colors?: { value: string; color: string }[];
+    fallback?: string;
+    /** polygons ignore colorProp when set (e.g. neutral NHC cones) */
+    polygonAccent?: string;
+    fillOpacity?: number;
+    lineWidth?: number;
+    lineOpacity?: number;
+    circleRadius?: number;
+    dashOutline?: boolean;
+  };
 }
 
 export const OVERLAY_DEFS: OverlayDef[] = [
   {
     id: "radar",
     label: "Radar",
-    kind: "raster",
-    tiles: [
-      "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png",
-    ],
-    opacity: 0.78,
-    maxzoom: 12,
-    refreshMs: 300_000, // NEXRAD composite refreshes ~5 min
+    swatch: "#43a047",
+    source: {
+      kind: "tiles",
+      tiles: [
+        "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png",
+      ],
+      maxzoom: 12,
+      opacity: 0.78,
+      refreshMs: 300_000, // NEXRAD composite refreshes ~5 min
+    },
   },
   {
     id: "alerts",
     label: "Alerts",
-    kind: "alerts",
-    url: "https://api.weather.gov/alerts/active?status=actual&message_type=alert",
-    colors: [
-      { value: "Extreme", color: "#b71c1c" },
-      { value: "Severe", color: "#f57c00" },
-      { value: "Moderate", color: "#fbc02d" },
-      { value: "Minor", color: "#78909c" },
-    ],
-    refreshMs: 180_000,
+    swatch: "#f57c00",
+    source: {
+      kind: "geojson",
+      url: "https://api.weather.gov/alerts/active?status=actual&message_type=alert",
+      refreshMs: 180_000,
+    },
+    style: {
+      colorProp: "severity",
+      colors: [
+        { value: "Extreme", color: "#b71c1c" },
+        { value: "Severe", color: "#f57c00" },
+        { value: "Moderate", color: "#fbc02d" },
+        { value: "Minor", color: "#78909c" },
+      ],
+      fillOpacity: 0.1,
+      lineWidth: 1.5,
+      lineOpacity: 0.85,
+    },
   },
   {
     id: "storms",
-    label: "Storms",
-    kind: "storms",
-    colors: [
-      { value: "TD", color: "#9aa5b1" },
-      { value: "TS", color: "#5ba7d1" },
-      { value: "1", color: "#f2d15c" },
-      { value: "2", color: "#f0a13c" },
-      { value: "3", color: "#e8642d" },
-      { value: "4", color: "#d02c2c" },
-      { value: "5", color: "#8e24aa" },
-    ],
+    label: "Active storms",
+    swatch: "#d02c2c",
+    source: { kind: "layerdata", layers: ["hurricanes_active"] },
+    style: {
+      colorProp: "cat",
+      colors: [
+        { value: "TD", color: "#9aa5b1" },
+        { value: "TS", color: "#5ba7d1" },
+        { value: "1", color: "#f2d15c" },
+        { value: "2", color: "#f0a13c" },
+        { value: "3", color: "#e8642d" },
+        { value: "4", color: "#d02c2c" },
+        { value: "5", color: "#8e24aa" },
+      ],
+      polygonAccent: "#5c6bc0",
+      fillOpacity: 0.1,
+      lineWidth: 2.4,
+      circleRadius: 4.5,
+      dashOutline: true,
+    },
+  },
+  {
+    id: "outlook",
+    label: "Severe outlook",
+    swatch: "#e8642d",
+    source: {
+      kind: "geojson",
+      url: "https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson",
+      refreshMs: 1_800_000,
+    },
+    style: {
+      colorProp: "LABEL",
+      colors: SPC_COLORS,
+      fillOpacity: 0.16,
+      lineWidth: 1.4,
+    },
+  },
+  {
+    id: "rivers",
+    label: "River gauges",
+    swatch: "#3288bd",
+    source: { kind: "layerdata", layers: ["rivers"] },
+    style: {
+      colorProp: "temp_class",
+      colors: [
+        { value: "lt50", color: "#5e4fa2" },
+        { value: "50s", color: "#3288bd" },
+        { value: "60s", color: "#66c2a5" },
+        { value: "70s", color: "#fee08b" },
+        { value: "80plus", color: "#d53e4f" },
+        { value: "flow_only", color: "#9aa5b1" },
+      ],
+      circleRadius: 3.5,
+    },
+  },
+  {
+    id: "tornado",
+    label: "Tornado tracks",
+    swatch: "#8e24aa",
+    source: { kind: "layerdata", layers: ["tornadoes_violent", "tornadoes_strong"] },
+    style: {
+      colorProp: "ef",
+      colors: [
+        { value: "2", color: "#f0a13c" },
+        { value: "3", color: "#e8642d" },
+        { value: "4", color: "#d02c2c" },
+        { value: "5", color: "#8e24aa" },
+      ],
+      fallback: "#f0a13c",
+      lineWidth: 2,
+    },
+  },
+  {
+    id: "drought",
+    label: "Drought",
+    swatch: "#FFAA00",
+    source: { kind: "layerdata", layers: ["drought"] },
+    style: {
+      colorProp: "dm",
+      colors: [
+        { value: "D0", color: "#FFFF54" },
+        { value: "D1", color: "#FCD37F" },
+        { value: "D2", color: "#FFAA00" },
+        { value: "D3", color: "#E60000" },
+        { value: "D4", color: "#730000" },
+      ],
+      fillOpacity: 0.15,
+      lineWidth: 1.2,
+    },
   },
 ];
 

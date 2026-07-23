@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { APP, DATA_BASE } from "./config";
+import { DATA_BASE } from "./config";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { MapView, type Pin } from "./map/MapView";
 import { nwsPointInfo } from "./map/nws";
 import { formatValue, sampleValue } from "./map/sampler";
 import { readUrlState, writeUrlState } from "./state/url";
-import { OverlayBar } from "./ui/OverlayBar";
+import { LeftNav } from "./ui/LeftNav";
 import { baseLayerFor, LAYER_DEFS, type LayerMeta, OVERLAY_DEFS } from "./types";
 import { ChatDrawer, type HighlightSpec } from "./chat/ChatDrawer";
 
@@ -22,7 +22,6 @@ function defaultDate(m: LayerMeta): string | null {
 }
 import { DateSlider } from "./ui/DateSlider";
 import { FilterPanel } from "./ui/FilterPanel";
-import { LayerSwitcher } from "./ui/LayerSwitcher";
 import { Legend } from "./ui/Legend";
 import { StatusBadge } from "./ui/StatusBadge";
 
@@ -250,7 +249,6 @@ export default function App() {
 
   return (
     <div className="app">
-      <OverlayBar active={overlayIds} onToggle={toggleOverlay} />
       <ErrorBoundary label="Map">
         <MapView
           tilesUrl={tilesUrl}
@@ -277,40 +275,19 @@ export default function App() {
         />
       </ErrorBoundary>
 
-      <header className="topbar">
-        <LayerSwitcher
-          layers={LAYER_DEFS}
-          active={baseLayer?.id ?? layerId}
-          onChange={(id) => {
-            const def = LAYER_DEFS.find((l) => l.id === id);
-            const dflt = def?.variants?.find((v) => v.isDefault) ?? def?.variants?.[0];
-            setLayerId(dflt ? dflt.id : id);
-          }}
-          brand={
-            <div className="brand">
-              <span className="brand-name">{APP.name}</span>
-              <span className="brand-tag">{APP.tagline}</span>
-            </div>
-          }
-          variantSlot={
-            baseLayer?.variants ? (
-              <div className="variant-toggle" role="tablist" aria-label="Sub-layer">
-                {baseLayer.variants.map((v) => (
-                  <button
-                    key={v.id}
-                    role="tab"
-                    aria-selected={v.id === layerId}
-                    className={v.id === layerId ? "chip chip-active" : "chip"}
-                    onClick={() => setLayerId(v.id)}
-                  >
-                    {v.label}
-                  </button>
-                ))}
-              </div>
-            ) : undefined
-          }
-        />
-      </header>
+      <LeftNav
+        layers={LAYER_DEFS}
+        activeBase={baseLayer?.id ?? layerId}
+        activeVariant={layerId}
+        onSelectBase={(id) => {
+          const def = LAYER_DEFS.find((l) => l.id === id);
+          const dflt = def?.variants?.find((v) => v.isDefault) ?? def?.variants?.[0];
+          setLayerId(dflt ? dflt.id : id);
+        }}
+        onSelectVariant={setLayerId}
+        overlayIds={overlayIds}
+        onToggleOverlay={toggleOverlay}
+      />
 
       {chatHighlight && (
         <button className="highlight-chip" onClick={() => setChatHighlight(null)}>

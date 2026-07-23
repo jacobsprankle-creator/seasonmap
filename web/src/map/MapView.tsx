@@ -705,9 +705,12 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
 
 
   // ── Overlays: independent live stack above every thematic layer ─────────
-  // Each overlay owns ovl-{id}* layers + an ovl-src-{id} source, inserted
-  // before the label anchor (= above ovl-anchor, above all thematic layers,
-  // below city names). Toggling a base layer never touches these.
+  // Declarative renderer over OVERLAY_DEFS: "tiles" = raster (optionally
+  // cache-bust refreshed); geojson kinds get four generic sub-layers
+  // (polygon fill / polygon outline / lines / points) driven by the def's
+  // style spec, so adding an overlay is registry-only. Everything inserts
+  // before the label anchor: above ovl-anchor (= above all thematic), below
+  // city names. Toggling a base layer never touches these.
   const overlaysKey = (overlays ?? []).map((o) => o.id).join(",");
   useEffect(() => {
     if (!map || !styleReady) return;
@@ -718,99 +721,118 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
     const srcIds: string[] = [];
     const before = labelAnchor.current;
     const EMPTY = { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection;
-    const matchExpr = (prop: string, colors: { value: string; color: string }[], fallback: string) =>
-      ["match", ["get", prop], ...colors.flatMap((c) => [c.value, c.color]), fallback] as any;
 
     for (const o of defs) {
       const src = `ovl-src-${o.id}`;
       try {
-        if (o.kind === "raster" && o.tiles) {
+        if (o.source.kind === "tiles") {
+          const cfg = o.source;
           const add = (bust: string) => {
             if (m.getLayer(`ovl-${o.id}`)) m.removeLayer(`ovl-${o.id}`);
             if (m.getSource(src)) m.removeSource(src);
             m.addSource(src, {
               type: "raster",
-              tiles: o.tiles!.map((t) => t + bust),
+              tiles: cfg.tiles.map((t) => t + bust),
               tileSize: 256,
-              maxzoom: o.maxzoom ?? 12,
+              maxzoom: cfg.maxzoom ?? 12,
             });
             m.addLayer(
               { id: `ovl-${o.id}`, type: "raster", source: src,
-                paint: { "raster-opacity": o.opacity ?? 0.8, "raster-fade-duration": 150 } },
+                paint: { "raster-opacity": cfg.opacity ?? 0.8, "raster-fade-duration": 150 } },
               before
             );
           };
           add("");
-          if (o.refreshMs)
-            timers.push(window.setInterval(() => { try { add(`?_=${Date.now()}`); } catch { /* map gone */ } }, o.refreshMs));
+          if (cfg.refreshMs)
+            timers.push(window.setInterval(() => { try { add(`?_=${Date.now()}`); } catch { /* map gone */ } }, cfg.refreshMs));
           layerIds.push(`ovl-${o.id}`);
           srcIds.push(src);
-        } else if (o.kind === "alerts" && o.url) {
-          m.addSource(src, { type: "geojson", data: EMPTY });
-          const color = matchExpr("severity", o.colors ?? [], "#90a4ae");
-          m.addLayer(
-            { id: `ovl-${o.id}-fill`, type: "fill", source: src,
-              paint: { "fill-color": color, "fill-opacity": 0.1 } },
-            before
-          );
-          m.addLayer(
-            { id: `ovl-${o.id}-line`, type: "line", source: src,
-              paint: { "line-color": color, "line-width": 1.5, "line-opacity": 0.85 } },
-            before
-          );
+          continue;
+        }
+
+        // GeoJSON kinds — one source, four style-driven sub-layers.
+        const st = o.style ?? {};
+        const colorExpr: any = st.colorProp
+          ? ["match", ["get", st.colorProp],
+             ...(st.colors ?? []).flatMap((c) => [c.value, c.color]),
+             st.fallback ?? "#90a4ae"]
+          : st.fallback ?? "#90a4ae";
+        const polyColor = st.polygonAccent ?? colorExpr;
+        m.addSource(src, { type: "geojson", data: EMPTY });
+        m.addLayer(
+          { id: `ovl-${o.id}-fill`, type: "fill", source: src,
+            filter: ["==", ["geometry-type"], "Polygon"],
+            paint: { "fill-color": polyColor, "fill-opacity": st.fillOpacity ?? 0.12 } },
+          before
+        );
+        m.addLayer(
+          { id: `ovl-${o.id}-outline`, type: "line", source: src,
+            filter: ["==", ["geometry-type"], "Polygon"],
+            paint: {
+              "line-color": polyColor,
+              "line-width": st.lineWidth ?? 1.2,
+              "line-opacity": st.lineOpacity ?? 0.75,
+              ...(st.dashOutline ? { "line-dasharray": [2, 2] } : {}),
+            } },
+          before
+        );
+        m.addLayer(
+          { id: `ovl-${o.id}-line`, type: "line", source: src,
+            filter: ["==", ["geometry-type"], "LineString"],
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: { "line-color": colorExpr, "line-width": st.lineWidth ?? 2,
+                     "line-opacity": st.lineOpacity ?? 0.95 } },
+          before
+        );
+        m.addLayer(
+          { id: `ovl-${o.id}-pt`, type: "circle", source: src,
+            filter: ["==", ["geometry-type"], "Point"],
+            paint: { "circle-radius": st.circleRadius ?? 4, "circle-color": colorExpr,
+                     "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2,
+                     "circle-opacity": 0.95 } },
+          before
+        );
+        layerIds.push(`ovl-${o.id}-fill`, `ovl-${o.id}-outline`, `ovl-${o.id}-line`, `ovl-${o.id}-pt`);
+        srcIds.push(src);
+
+        const setData = (gj: GeoJSON.FeatureCollection) =>
+          (m.getSource(src) as maplibregl.GeoJSONSource | undefined)?.setData(gj);
+
+        if (o.source.kind === "geojson") {
+          const cfg = o.source;
           const load = async () => {
             try {
-              const r = await fetch(o.url!, { headers: { Accept: "application/geo+json" } });
+              const r = await fetch(cfg.url, { headers: { Accept: "application/geo+json" } });
               const gj = (await r.json()) as GeoJSON.FeatureCollection;
               gj.features = (gj.features ?? []).filter((f) => f.geometry);
-              (m.getSource(src) as maplibregl.GeoJSONSource | undefined)?.setData(gj);
+              setData(gj);
             } catch { /* transient — next refresh retries */ }
           };
           load();
-          if (o.refreshMs) timers.push(window.setInterval(load, o.refreshMs));
-          layerIds.push(`ovl-${o.id}-fill`, `ovl-${o.id}-line`);
-          srcIds.push(src);
-        } else if (o.kind === "storms") {
-          m.addSource(src, { type: "geojson", data: EMPTY });
-          const cat = matchExpr("cat", o.colors ?? [], "#9aa5b1");
-          m.addLayer(
-            { id: `ovl-${o.id}-cone`, type: "fill", source: src,
-              filter: ["==", ["geometry-type"], "Polygon"],
-              paint: { "fill-color": "#5c6bc0", "fill-opacity": 0.1 } },
-            before
-          );
-          m.addLayer(
-            { id: `ovl-${o.id}-coneline`, type: "line", source: src,
-              filter: ["==", ["geometry-type"], "Polygon"],
-              paint: { "line-color": "#5c6bc0", "line-width": 1, "line-opacity": 0.5, "line-dasharray": [2, 2] } },
-            before
-          );
-          m.addLayer(
-            { id: `ovl-${o.id}-track`, type: "line", source: src,
-              filter: ["==", ["geometry-type"], "LineString"],
-              layout: { "line-cap": "round", "line-join": "round" },
-              paint: { "line-color": cat, "line-width": 2.4, "line-opacity": 0.95 } },
-            before
-          );
-          m.addLayer(
-            { id: `ovl-${o.id}-pos`, type: "circle", source: src,
-              filter: ["==", ["geometry-type"], "Point"],
-              paint: { "circle-radius": 4.5, "circle-color": cat,
-                       "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.5 } },
-            before
-          );
+          if (cfg.refreshMs) timers.push(window.setInterval(load, cfg.refreshMs));
+        } else {
+          const layers = o.source.layers;
           const load = async () => {
             try {
-              const meta = await (await fetch(`${DATA_BASE}/meta/hurricanes_active/latest.json`)).json();
-              const d = meta.latest ?? meta.dates?.[meta.dates.length - 1];
-              if (!d || !meta.data) return;
-              const gj = await (await fetch(`${DATA_BASE}/${meta.data.replace("{date}", d)}`)).json();
-              (m.getSource(src) as maplibregl.GeoJSONSource | undefined)?.setData(gj);
-            } catch { /* no active-storm data — overlay stays empty */ }
+              const parts = await Promise.all(
+                layers.map(async (ly) => {
+                  try {
+                    const meta = await (await fetch(`${DATA_BASE}/meta/${ly}/latest.json`)).json();
+                    const d = meta.latest ?? meta.dates?.[meta.dates.length - 1];
+                    if (!d || !meta.data) return [];
+                    const gj = await (
+                      await fetch(`${DATA_BASE}/${meta.data.replace("{date}", d)}`)
+                    ).json();
+                    return (gj.features ?? []) as GeoJSON.Feature[];
+                  } catch {
+                    return []; // one sub-layer missing must not empty the rest
+                  }
+                })
+              );
+              setData({ type: "FeatureCollection", features: parts.flat() });
+            } catch { /* overlay stays empty */ }
           };
           load();
-          layerIds.push(`ovl-${o.id}-cone`, `ovl-${o.id}-coneline`, `ovl-${o.id}-track`, `ovl-${o.id}-pos`);
-          srcIds.push(src);
         }
       } catch { /* one overlay failing must not take the rest down */ }
     }
