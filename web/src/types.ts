@@ -15,6 +15,13 @@ export interface LayerMeta {
   maxzoom: number;
   units: string;
   type?: "vector";
+  /** Streamed model layers: run-scoped tiles + the run picker's data. */
+  hourly?: boolean;
+  model_run?: string;
+  run?: string;
+  runs?: string[];
+  runs_dates?: Record<string, string[]>;
+  query?: string;
   style?: {
     geometry: string;
     color_property: string;

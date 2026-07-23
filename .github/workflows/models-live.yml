@@ -7,7 +7,11 @@ name: models-live
 
 on:
   schedule:
-    - cron: "11,41 * * * *" # :08-style on-the-hour crons get skipped under load
+    # Two single-minute entries (matches the known-firing hourly.yml shape);
+    # rewriting this block also re-registers the schedule — GitHub never
+    # started firing the original combined "11,41" cron after workflow creation.
+    - cron: "11 * * * *"
+    - cron: "41 * * * *"
   workflow_dispatch:
     inputs:
       families:

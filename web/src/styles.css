@@ -400,3 +400,23 @@ html, body, #root { margin: 0; height: 100%; }
 @media (max-width: 860px) {
   .leftnav { width: min(78vw, 300px); }
 }
+
+/* ── Run picker — flip between model initializations ─────────────────── */
+.run-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+.run-picker-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7a72;
+  margin-right: 2px;
+}
+.run-picker .chip { font-size: 11.5px; padding: 3px 10px; }

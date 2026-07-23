@@ -161,7 +161,23 @@ export default function App() {
   );
 
   const isVector = meta?.type === "vector";
-  const hourly = !!(meta as any)?.hourly && (meta?.dates.length ?? 0) > 12;
+
+  // Run picker: viewing an older model run swaps the date list and the {run}
+  // token resolution; everything downstream reads effMeta.
+  const [runOverride, setRunOverride] = useState<string | null>(null);
+  useEffect(() => setRunOverride(null), [layerId]);
+  const effMeta = useMemo(() => {
+    if (!meta || !runOverride) return meta;
+    const rd = meta.runs_dates?.[runOverride];
+    return rd?.length ? ({ ...meta, dates: rd, run: runOverride } as LayerMeta) : meta;
+  }, [meta, runOverride]);
+  useEffect(() => {
+    if (!effMeta || !runOverride) return;
+    setDate((d) => (d && effMeta.dates.includes(d) ? d : defaultDate(effMeta)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runOverride]);
+
+  const hourly = !!effMeta?.hourly && (effMeta?.dates.length ?? 0) > 12;
   // Streamed layers publish run-scoped tiles: the template carries a {run}
   // token resolved from meta.run (date-keyed layers pass through unchanged).
   const resolveTiles = useCallback(
@@ -171,27 +187,27 @@ export default function App() {
   );
   const frameUrls = useMemo(
     () =>
-      hourly && meta
-        ? meta.dates.map((d) => resolveTiles(meta, d))
+      hourly && effMeta
+        ? effMeta.dates.map((d) => resolveTiles(effMeta, d))
         : null,
-    [hourly, meta, resolveTiles]
+    [hourly, effMeta, resolveTiles]
   );
-  const frameIndex = hourly && meta && date ? Math.max(0, meta.dates.indexOf(date)) : 0;
+  const frameIndex = hourly && effMeta && date ? Math.max(0, effMeta.dates.indexOf(date)) : 0;
   const [framePlaying, setFramePlaying] = useState(false);
   useEffect(() => setFramePlaying(false), [layerId]);
   useEffect(() => {
-    if (!framePlaying || !hourly || !meta) return;
+    if (!framePlaying || !hourly || !effMeta) return;
     const t = setInterval(() => {
       setDate((d) => {
-        const i = d ? meta.dates.indexOf(d) : 0;
-        return meta.dates[(i + 1) % meta.dates.length];
+        const i = d ? effMeta.dates.indexOf(d) : 0;
+        return effMeta.dates[(i + 1) % effMeta.dates.length];
       });
     }, 320);
     return () => clearInterval(t);
-  }, [framePlaying, hourly, meta]);
+  }, [framePlaying, hourly, effMeta]);
   const tilesUrl =
-    meta && date && !isVector && !hourly
-      ? resolveTiles(meta, date)
+    effMeta && date && !isVector && !hourly
+      ? resolveTiles(effMeta, date)
       : null;
   const vector = externalVec
     ? {
@@ -312,9 +328,35 @@ export default function App() {
             }}
           />
         )}
+        {effMeta && Object.keys(effMeta.runs_dates ?? {}).length > 1 && (
+          <div className="run-picker" role="tablist" aria-label="Model run">
+            <span className="run-picker-label">init</span>
+            {(meta?.runs ?? [])
+              .filter((rk) => (meta?.runs_dates?.[rk]?.length ?? 0) > 0)
+              .slice(0, 3)
+              .map((rk) => {
+                const on = rk === (runOverride ?? meta?.run);
+                return (
+                  <button
+                    key={rk}
+                    role="tab"
+                    aria-selected={on}
+                    className={on ? "chip chip-active" : "chip"}
+                    title={`${rk.slice(0, 4)}-${rk.slice(4, 6)}-${rk.slice(6, 8)} ${rk.slice(9)}`}
+                    onClick={() => {
+                      setFramePlaying(false);
+                      setRunOverride(rk === meta?.run ? null : rk);
+                    }}
+                  >
+                    {`${rk.slice(9, 11)}Z`}
+                  </button>
+                );
+              })}
+          </div>
+        )}
         {meta && date && (
           <DateSlider
-            dates={meta.dates}
+            dates={effMeta!.dates}
             value={date}
             onChange={(d) => { setFramePlaying(false); setDate(d); }}
             playing={hourly ? framePlaying : undefined}
@@ -352,9 +394,14 @@ export default function App() {
         {(meta || external || externalVec) && (
           <div className="meta-caption">
             {external ? external.caption : externalVec ? externalVec.caption : meta!.description}
-            {(meta as any)?.model_run
-              ? ` · init ${(meta as any).model_run} (${new Date((meta as any).model_run.replace("Z", ":00Z")).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })} local)`
-              : ""}
+            {(() => {
+              const stamp = runOverride
+                ? `${runOverride.slice(0, 4)}-${runOverride.slice(4, 6)}-${runOverride.slice(6, 8)}T${runOverride.slice(9, 11)}:00Z`
+                : meta?.model_run;
+              return stamp
+                ? ` · init ${stamp} (${new Date(stamp.replace("Z", ":00Z")).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })} local)`
+                : "";
+            })()}
             {!external && !externalVec && meta!.dates.length < 2 ? " · updated nightly" : ""}
           </div>
         )}

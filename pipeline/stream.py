@@ -137,7 +137,8 @@ def _publish_frame(publisher, workdir: Path, out: LayerOutput, run_key: str) -> 
     return n
 
 
-def _publish_meta(publisher, sample: LayerOutput, dates: List[str], run_key: str, runs: List[str]) -> None:
+def _publish_meta(publisher, sample: LayerOutput, dates: List[str], run_key: str, runs: List[str],
+                  runs_dates: Optional[Dict[str, List[str]]] = None) -> None:
     meta = publish.build_meta(
         layer=sample.layer, dates=dates, legend=sample.legend, stats=sample.stats(),
         min_zoom=tiling.DEFAULT_MIN_ZOOM, max_zoom=MAX_ZOOM,
@@ -149,10 +150,13 @@ def _publish_meta(publisher, sample: LayerOutput, dates: List[str], run_key: str
     meta.pop("data", None)
     meta["run"] = run_key
     meta["runs"] = runs[:4]
+    if runs_dates:
+        meta["runs_dates"] = runs_dates
     publish.publish_meta(publisher, sample.layer, meta)
 
 
-def _touch_meta(publisher, layer: str, dates: List[str], run_key: str, runs: List[str]) -> None:
+def _touch_meta(publisher, layer: str, dates: List[str], run_key: str, runs: List[str],
+                runs_dates: Optional[Dict[str, List[str]]] = None) -> None:
     """Refresh dates/run/heartbeat on existing meta without a sample frame."""
     raw = publisher.get_bytes(f"meta/{layer}/latest.json")
     if not raw:
@@ -162,8 +166,25 @@ def _touch_meta(publisher, layer: str, dates: List[str], run_key: str, runs: Lis
     meta["latest"] = dates[-1] if dates else None
     meta["run"] = run_key
     meta["runs"] = runs[:4]
+    if runs_dates:
+        meta["runs_dates"] = runs_dates
     meta["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     publish.publish_meta(publisher, layer, meta)
+
+
+def _fresh_state(run_key: str, run_start: dt.datetime, old: Optional[dict]) -> dict:
+    """New-run cursor. Carries the previous run's frame list so meta can offer
+    a run picker (runs_dates) while KEEP_RUNS retains its tiles."""
+    state = {
+        "run": run_key,
+        "run_start": run_start.strftime("%Y-%m-%dT%H:%M"),
+        "frames": [],
+        "attempts": {},
+        "prev_runs": (([old["run"]] + old.get("prev_runs", [])) if old else [])[:6],
+    }
+    if old and old.get("frames"):
+        state["prev"] = {"run": old["run"], "frames": old["frames"]}
+    return state
 
 
 def process_family(publisher, fam: str, om_id: str, label: str, switch_lead: float,
@@ -181,13 +202,8 @@ def process_family(publisher, fam: str, om_id: str, label: str, switch_lead: flo
     else:
         max_lead = max((_lead_h(k, cand_start) for k in cand_frames), default=0.0)
         if state is None or max_lead >= switch_lead:
-            if state:
-                prev = [state["run"]] + state.get("prev_runs", [])
-            else:
-                prev = []
             active_run, active_start, main_frames = cand_run, cand_start, cand_frames
-            state = {"run": active_run, "run_start": active_start.strftime("%Y-%m-%dT%H:%M"),
-                     "frames": [], "attempts": {}, "prev_runs": prev[:6]}
+            state = _fresh_state(active_run, active_start, state)
             switched = True
         else:
             # Candidate too young (Option A) — keep serving/ingesting the old run.
@@ -197,10 +213,8 @@ def process_family(publisher, fam: str, om_id: str, label: str, switch_lead: flo
                 _, _, main_frames = sf.list_run_frames_at(main_domain, active_run)
             except Exception:
                 # Old run dir vanished (7-day retention or listing hiccup) — adopt.
-                prev = [state["run"]] + state.get("prev_runs", [])
                 active_run, active_start, main_frames = cand_run, cand_start, cand_frames
-                state = {"run": active_run, "run_start": active_start.strftime("%Y-%m-%dT%H:%M"),
-                         "frames": [], "attempts": {}, "prev_runs": prev[:6]}
+                state = _fresh_state(active_run, active_start, state)
                 switched = True
 
     indexes: Dict[str, Dict[str, str]] = {main_domain: main_frames}
@@ -226,6 +240,13 @@ def process_family(publisher, fam: str, om_id: str, label: str, switch_lead: flo
     run_stamp = active_start.strftime("%Y-%m-%dT%H:%MZ")
     runs = [active_run] + state.get("prev_runs", [])
 
+    def _runs_dates(dates_sorted: List[str]) -> Dict[str, List[str]]:
+        rd = {active_run: dates_sorted}
+        prev = state.get("prev")
+        if prev and prev.get("frames"):
+            rd[prev["run"]] = sorted(prev["frames"])
+        return rd
+
     if switched:
         # Prune runs beyond KEEP_RUNS for all three layers (+ their query grids).
         for old in state.get("prev_runs", [])[KEEP_RUNS - 1:]:
@@ -241,7 +262,8 @@ def process_family(publisher, fam: str, om_id: str, label: str, switch_lead: flo
 
     if not new:
         for slug in (f"{fam}_tmax", f"{fam}_precip3", f"{fam}_sfc"):
-            _touch_meta(publisher, slug, sorted(state["frames"]), active_run, runs)
+            _touch_meta(publisher, slug, sorted(state["frames"]), active_run, runs,
+                        _runs_dates(sorted(state["frames"])))
         publisher.put_bytes(json.dumps(state).encode("utf-8"), _state_key(fam))
         return f"{fam}: up to date ({len(state['frames'])} frames, run {active_run})"
 
@@ -280,10 +302,10 @@ def process_family(publisher, fam: str, om_id: str, label: str, switch_lead: flo
     dates = sorted(state["frames"])
     if last_outs:
         for out in last_outs:
-            _publish_meta(publisher, out, dates, active_run, runs)
+            _publish_meta(publisher, out, dates, active_run, runs, _runs_dates(dates))
     else:
         for slug in (f"{fam}_tmax", f"{fam}_precip3", f"{fam}_sfc"):
-            _touch_meta(publisher, slug, dates, active_run, runs)
+            _touch_meta(publisher, slug, dates, active_run, runs, _runs_dates(dates))
     publisher.put_bytes(json.dumps(state).encode("utf-8"), _state_key(fam))
     return f"{fam}: published {published} frames (run {active_run}, total {len(state['frames'])})"
 
@@ -308,12 +330,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     deadline = time.monotonic() + args.deadline_min * 60.0
     failures = 0
-    for fam, om_id, label, switch_lead in fams:
-        if time.monotonic() > deadline:
+    for i, (fam, om_id, label, switch_lead) in enumerate(fams):
+        now = time.monotonic()
+        if now > deadline:
             print(f"{fam}: skipped (deadline) — next tick")
             continue
+        # Fair-share budget: one family's run-switch backfill (gem = 104
+        # frames) must not starve the rest of the tick. Early finishers
+        # donate their unused share to whoever comes next.
+        fam_deadline = min(deadline, now + max(240.0, (deadline - now) / (len(fams) - i)))
         try:
-            print(process_family(publisher, fam, om_id, label, switch_lead, deadline, args.max_frames))
+            print(process_family(publisher, fam, om_id, label, switch_lead, fam_deadline, args.max_frames))
         except Exception:  # noqa: BLE001
             failures += 1
             print(f"{fam}: FAILED\n{traceback.format_exc()}", file=sys.stderr)
