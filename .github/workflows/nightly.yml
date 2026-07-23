@@ -62,7 +62,7 @@ jobs:
     name: ${{ matrix.group }}
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
-      max-parallel: 3
+      max-parallel: 3 # gentle on Open-Meteo — 7 concurrent fetchers caused 429 stampedes
       fail-fast: false
       matrix:
         include:
@@ -81,24 +81,17 @@ jobs:
           - group: nowcast
             layers: conditions_temp,conditions_humidity,conditions_dewpoint,conditions_wind,air_aqi,air_pm25,air_smoke
             timeout: 40
-          - group: model-gfs
-            layers: gfs_tmax,gfs_precip,gfs_snow,gfs_mslp,gfs_z500,gfs_w250,gfs_gusts,gfs_cape
-            timeout: 50
-          - group: model-euro
-            layers: euro_tmax,euro_precip,euro_snow,euro_mslp,euro_z500,euro_w250,euro_gusts,euro_cape
-            timeout: 50
-          - group: model-hrrr
-            layers: hrrr_tmax,hrrr_precip,hrrr_snow,hrrr_mslp,hrrr_gusts,hrrr_cape
-            timeout: 50
-          - group: model-ukmet
-            layers: ukmet_tmax,ukmet_precip,ukmet_snow,ukmet_mslp,ukmet_z500,ukmet_w250,ukmet_gusts,ukmet_cape
-            timeout: 50
-          - group: model-icon
-            layers: icon_tmax,icon_precip,icon_snow,icon_mslp,icon_z500,icon_w250,icon_gusts,icon_cape
-            timeout: 50
-          - group: model-gem
-            layers: gem_tmax,gem_precip,gem_snow,gem_mslp,gem_z500,gem_w250,gem_gusts,gem_cape
-            timeout: 50
+          # Models ride a 1° grid and the API's multi-model batching: each
+          # job below makes ONE grid pass for its three models (~24× fewer
+          # API calls than the original 6 × 0.5° jobs — quota-safe).
+          - group: models-a
+            layers: gfs_tmax,gfs_precip,gfs_snow,gfs_mslp,gfs_z500,gfs_w250,gfs_gusts,gfs_cape,euro_tmax,euro_precip,euro_snow,euro_mslp,euro_z500,euro_w250,euro_gusts,euro_cape,hrrr_tmax,hrrr_precip,hrrr_snow,hrrr_mslp,hrrr_gusts,hrrr_cape
+            model_group: gfs_seamless,ecmwf_ifs025,gfs_hrrr
+            timeout: 60
+          - group: models-b
+            layers: ukmet_tmax,ukmet_precip,ukmet_snow,ukmet_mslp,ukmet_z500,ukmet_w250,ukmet_gusts,ukmet_cape,icon_tmax,icon_precip,icon_snow,icon_mslp,icon_z500,icon_w250,icon_gusts,icon_cape,gem_tmax,gem_precip,gem_snow,gem_mslp,gem_z500,gem_w250,gem_gusts,gem_cape
+            model_group: ukmo_seamless,icon_seamless,gem_seamless
+            timeout: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -121,6 +114,7 @@ jobs:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           PIPELINE_USER_AGENT: ${{ vars.PIPELINE_USER_AGENT }}
           REQUIRE_R2: "1"
+          OPEN_METEO_MODEL_GROUP: ${{ matrix.model_group || '' }}
         run: |
           python -m pipeline.run \
             --layer "${{ matrix.layers }}" \

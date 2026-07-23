@@ -45,7 +45,45 @@ def _coarse_grid(spacing: float) -> Tuple[np.ndarray, np.ndarray]:
     return lons, lats
 
 
-def _fetch_points(session: requests.Session, lats: List[float], lons: List[float]) -> list:
+class _BackoffBudget:
+    """Cumulative 429-backoff budget for one logical fetch.
+
+    Grinding a CI job into its timeout with polite sleeps is worse than
+    failing fast — every layer failure is retried by the next cron anyway.
+    Default cap 180s, override with OPEN_METEO_MAX_BACKOFF_S.
+    """
+
+    def __init__(self):
+        self.cap = float(os.environ.get("OPEN_METEO_MAX_BACKOFF_S", "180"))
+        self.spent = 0.0
+
+    def sleep(self, wait: float) -> None:
+        if self.spent + wait > self.cap:
+            raise RuntimeError(
+                f"Open-Meteo quota exhausted — failing fast after {self.spent:.0f}s "
+                "of backoff (next scheduled run retries)"
+            )
+        self.spent += wait
+        time.sleep(wait)
+
+
+_BACKOFFS = [15, 30, 45, 60]
+
+
+def _get_with_backoff(session: requests.Session, params: dict, budget: _BackoffBudget, timeout: int = 180) -> list:
+    """GET the forecast API, honoring Retry-After within the budget."""
+    for attempt in range(len(_BACKOFFS) + 1):
+        resp = session.get(API, params=params, timeout=timeout)
+        if resp.status_code == 429 and attempt < len(_BACKOFFS):
+            budget.sleep(float(resp.headers.get("Retry-After") or _BACKOFFS[attempt]))
+            continue
+        resp.raise_for_status()
+        payload = resp.json()
+        return payload if isinstance(payload, list) else [payload]
+    raise RuntimeError("Open-Meteo retries exhausted")  # pragma: no cover
+
+
+def _fetch_points(session: requests.Session, lats: List[float], lons: List[float], budget: _BackoffBudget = None) -> list:
     params = {
         "latitude": ",".join(f"{v:.3f}" for v in lats),
         "longitude": ",".join(f"{v:.3f}" for v in lons),
@@ -55,17 +93,7 @@ def _fetch_points(session: requests.Session, lats: List[float], lons: List[float
         "temperature_unit": "celsius",
         "timezone": "UTC",
     }
-    backoffs = [15, 30, 60, 90, 120]  # minutely quota resets on the minute
-    for attempt in range(len(backoffs) + 1):
-        resp = session.get(API, params=params, timeout=120)
-        if resp.status_code == 429 and attempt < len(backoffs):
-            wait = float(resp.headers.get("Retry-After") or backoffs[attempt])
-            time.sleep(wait)
-            continue
-        resp.raise_for_status()
-        payload = resp.json()
-        return payload if isinstance(payload, list) else [payload]
-    raise RuntimeError("Open-Meteo retries exhausted")  # pragma: no cover
+    return _get_with_backoff(session, params, budget or _BackoffBudget(), timeout=120)
 
 
 def fetch_current_fields(run_key: str) -> Dict[str, np.ndarray]:
@@ -95,7 +123,7 @@ def fetch_current_fields(run_key: str) -> Dict[str, np.ndarray]:
 
     n = flat_lons.size
     coarse = {var: np.full(n, np.nan, dtype=np.float32) for var in CURRENT_VARS}
-    backoffs = [15, 30, 60, 90, 120]
+    budget = _BackoffBudget()  # one cumulative cap for the whole fetch
     for start in range(0, n, BATCH):
         sl = slice(start, min(start + BATCH, n))
         params = {
@@ -106,22 +134,14 @@ def fetch_current_fields(run_key: str) -> Dict[str, np.ndarray]:
             "wind_speed_unit": "mph",
             "timezone": "UTC",
         }
-        for attempt in range(len(backoffs) + 1):
-            resp = session.get(API, params=params, timeout=120)
-            if resp.status_code == 429 and attempt < len(backoffs):
-                time.sleep(float(resp.headers.get("Retry-After") or backoffs[attempt]))
-                continue
-            resp.raise_for_status()
-            break
-        payload = resp.json()
-        results = payload if isinstance(payload, list) else [payload]
+        results = _get_with_backoff(session, params, budget, timeout=120)
         for k, res in enumerate(results):
             cur = res.get("current", {})
             for var in CURRENT_VARS:
                 v = cur.get(var)
                 if v is not None:
                     coarse[var][start + k] = v
-        time.sleep(0.15)
+        time.sleep(float(os.environ.get("OPEN_METEO_BATCH_PACE_S", "1.0")))
 
     coarse_transform = Affine(
         spacing, 0.0, float(lons[0]) - spacing / 2, 0.0, -spacing, float(lats[0]) + spacing / 2
@@ -149,29 +169,59 @@ MODEL_DAILY = ["temperature_2m_max", "precipitation_sum", "snowfall_sum", "wind_
 MODEL_HOURLY = ["pressure_msl", "geopotential_height_500hPa", "wind_speed_250hPa", "cape"]
 
 
-def fetch_model_fields(model_id: str, run_key: str):
-    """Per-model forecast fields on the canonical grid, 8 lead days.
+MODEL_PARAM_KEYS = ["tmax", "precip_accum", "snow_accum", "mslp", "z500", "w250", "gusts", "cape"]
 
-    Returns (dates, {param: (D, H, W)}) with params:
-      tmax °F · precip_accum in (cumulative) · snow_accum in (cumulative) ·
-      mslp hPa (12Z) · z500 dam (12Z) · w250 mph (12Z jet-level wind)
-    One upstream fetch per model per hour (disk-cached); hourly vars pulled at
-    6-hour resolution and snapshotted at 12Z per day.
+
+def fetch_model_fields(model_id: str, run_key: str):
+    """One model's forecast fields — thin wrapper over the batched fetcher.
+
+    If OPEN_METEO_MODEL_GROUP (comma list of open-meteo model ids) contains
+    model_id, the FIRST call fetches the whole group in one grid pass and
+    disk-caches every member — sibling model layers then hit cache instantly.
+    CI sets the group per matrix job; local single-layer runs fetch solo.
+    """
+    group = [s.strip() for s in os.environ.get("OPEN_METEO_MODEL_GROUP", "").split(",") if s.strip()]
+    ids = group if model_id in group else [model_id]
+    return fetch_models_batch(ids, run_key)[model_id]
+
+
+def fetch_models_batch(model_ids: List[str], run_key: str) -> Dict[str, tuple]:
+    """Several models' forecast fields in ONE coarse-grid pass.
+
+    Returns {model_id: (dates, {param: (D, H, W)})} with params:
+      tmax °F · precip_accum in · snow_accum in · mslp hPa (12Z) ·
+      z500 dam (12Z) · w250 mph (12Z) · gusts mph · cape J/kg (daily max)
+
+    Models default to a 1.0° point grid (OPEN_METEO_MODEL_SPACING_DEG) —
+    synoptic fields don't need 0.5°, and the coarser grid quarters the API
+    volume. The API's `models=` parameter returns every requested model's
+    values per call (keys suffixed `_{model_id}`), so a 3-model group costs
+    one pass, not three. Per-model results are disk-cached by hour key.
     """
     from .elevation import static_dir
 
-    cache_id = f"{model_id}:{run_key}"
-    if cache_id in _current_cache:
-        return _current_cache[cache_id]  # type: ignore[return-value]
+    spacing = float(os.environ.get("OPEN_METEO_MODEL_SPACING_DEG", "1.0"))
 
-    spacing = float(os.environ.get("OPEN_METEO_SPACING_DEG", "0.5"))
-    params_keys = ["tmax", "precip_accum", "snow_accum", "mslp", "z500", "w250", "gusts", "cape"]
-    disk = static_dir() / f"openmeteo_modelx_{model_id}_{run_key}_{spacing:g}.npz"
-    if disk.exists():
-        z = np.load(disk)
-        result = ([str(s) for s in z["dates"]], {k: z[k] for k in params_keys})
-        _current_cache[cache_id] = result  # type: ignore[assignment]
-        return result
+    def disk_for(mid: str):
+        return static_dir() / f"openmeteo_modelx_{mid}_{run_key}_{spacing:g}.npz"
+
+    results: Dict[str, tuple] = {}
+    missing: List[str] = []
+    for mid in model_ids:
+        cache_id = f"{mid}:{run_key}:{spacing:g}"
+        if cache_id in _current_cache:
+            results[mid] = _current_cache[cache_id]  # type: ignore[assignment]
+            continue
+        disk = disk_for(mid)
+        if disk.exists():
+            z = np.load(disk)
+            result = ([str(s) for s in z["dates"]], {k: z[k] for k in MODEL_PARAM_KEYS})
+            _current_cache[cache_id] = result  # type: ignore[assignment]
+            results[mid] = result
+        else:
+            missing.append(mid)
+    if not missing:
+        return results
 
     lons, lats = _coarse_grid(spacing)
     lon_g, lat_g = np.meshgrid(lons, lats)
@@ -179,14 +229,19 @@ def fetch_model_fields(model_id: str, run_key: str):
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
 
-    def field(daily_or_hourly: dict, name: str):
-        return daily_or_hourly.get(name) or daily_or_hourly.get(f"{name}_{model_id}") or []
-
     n = flat_lons.size
     dates: List[str] = []
     hours: List[str] = []
-    raw: Dict[str, np.ndarray] = {}
-    backoffs = [15, 30, 60, 90, 120]
+    raw: Dict[str, Dict[str, np.ndarray]] = {mid: {} for mid in missing}
+    budget = _BackoffBudget()  # one cumulative cap for the whole pass
+    solo = len(missing) == 1
+
+    def field(section: dict, name: str, mid: str):
+        vals = section.get(f"{name}_{mid}")
+        if vals is None and solo:
+            vals = section.get(name)  # single-model responses may omit the suffix
+        return vals or []
+
     for start in range(0, n, BATCH):
         sl = slice(start, min(start + BATCH, n))
         req = {
@@ -195,41 +250,37 @@ def fetch_model_fields(model_id: str, run_key: str):
             "daily": ",".join(MODEL_DAILY),
             "hourly": ",".join(MODEL_HOURLY),
             "temporal_resolution": "hourly_6",
-            "models": model_id,
+            "models": ",".join(missing),
             "forecast_days": "8",
             "temperature_unit": "fahrenheit",
             "wind_speed_unit": "mph",
             "precipitation_unit": "inch",
             "timezone": "UTC",
         }
-        for attempt in range(len(backoffs) + 1):
-            resp = session.get(API, params=req, timeout=180)
-            if resp.status_code == 429 and attempt < len(backoffs):
-                time.sleep(float(resp.headers.get("Retry-After") or backoffs[attempt]))
-                continue
-            resp.raise_for_status()
-            break
-        payload = resp.json()
-        results = payload if isinstance(payload, list) else [payload]
-        for k, res in enumerate(results):
+        page = _get_with_backoff(session, req, budget, timeout=180)
+        for k, res in enumerate(page):
             daily = res.get("daily", {})
             hourly = res.get("hourly", {})
             if not dates:
                 dates = daily.get("time", [])
                 hours = hourly.get("time", [])
-                for key in ("tmax", "precip_d", "snow_d", "gusts_d"):
-                    raw[key] = np.full((len(dates), n), np.nan, dtype=np.float32)
-                for key in ("mslp", "z500", "w250", "cape_h"):
-                    raw[key] = np.full((len(hours), n), np.nan, dtype=np.float32)
-            for key, name in (("tmax", "temperature_2m_max"), ("precip_d", "precipitation_sum"), ("snow_d", "snowfall_sum"), ("gusts_d", "wind_gusts_10m_max")):
-                for d, v in enumerate(field(daily, name)[: len(dates)]):
-                    if v is not None:
-                        raw[key][d, start + k] = v
-            for key, name in (("mslp", "pressure_msl"), ("z500", "geopotential_height_500hPa"), ("w250", "wind_speed_250hPa"), ("cape_h", "cape")):
-                for h, v in enumerate(field(hourly, name)[: len(hours)]):
-                    if v is not None:
-                        raw[key][h, start + k] = v
-        time.sleep(0.15)
+                for mid in missing:
+                    for key in ("tmax", "precip_d", "snow_d", "gusts_d"):
+                        raw[mid][key] = np.full((len(dates), n), np.nan, dtype=np.float32)
+                    for key in ("mslp", "z500", "w250", "cape_h"):
+                        raw[mid][key] = np.full((len(hours), n), np.nan, dtype=np.float32)
+            for mid in missing:
+                for key, name in (("tmax", "temperature_2m_max"), ("precip_d", "precipitation_sum"), ("snow_d", "snowfall_sum"), ("gusts_d", "wind_gusts_10m_max")):
+                    for d, v in enumerate(field(daily, name, mid)[: len(dates)]):
+                        if v is not None:
+                            raw[mid][key][d, start + k] = v
+                for key, name in (("mslp", "pressure_msl"), ("z500", "geopotential_height_500hPa"), ("w250", "wind_speed_250hPa"), ("cape_h", "cape")):
+                    for h, v in enumerate(field(hourly, name, mid)[: len(hours)]):
+                        if v is not None:
+                            raw[mid][key][h, start + k] = v
+        # Proactive pacing: multi-model batches are heavy call-units; spreading
+        # them across minute windows avoids tripping the per-minute quota at all.
+        time.sleep(float(os.environ.get("OPEN_METEO_BATCH_PACE_S", "2.5")))
 
     # 12Z snapshot index per lead day for the synoptic fields.
     idx12 = []
@@ -251,32 +302,34 @@ def fetch_model_fields(model_id: str, run_key: str):
         )
 
     D = len(dates)
-    out: Dict[str, np.ndarray] = {k: np.zeros((D,) + grid.SHAPE, dtype=np.float32) for k in params_keys}
-    precip_run = np.zeros(n, dtype=np.float32)
-    snow_run = np.zeros(n, dtype=np.float32)
-    for d in range(D):
-        out["tmax"][d] = to_grid(raw["tmax"][d])
-        precip_run = precip_run + np.nan_to_num(raw["precip_d"][d])
-        snow_run = snow_run + np.nan_to_num(raw["snow_d"][d])  # API returns snowfall in cm even w/ inch precip unit? normalize below
-        out["precip_accum"][d] = to_grid(precip_run.copy())
-        out["snow_accum"][d] = to_grid(snow_run.copy() / 2.54)  # cm → in
-        out["mslp"][d] = to_grid(raw["mslp"][idx12[d]])
-        z = to_grid(raw["z500"][idx12[d]])
-        valid = z != grid.NODATA
-        z[valid] = z[valid] / 10.0  # m → dam
-        out["z500"][d] = z
-        out["w250"][d] = to_grid(raw["w250"][idx12[d]])
-        out["gusts"][d] = to_grid(raw["gusts_d"][d])
-        # CAPE: daily max across the day's 6-hourly values (peaks mid-afternoon).
-        day_prefix = dates[d]
-        day_idx = [i for i, h in enumerate(hours) if h.startswith(day_prefix)]
-        cape_day = np.nanmax(raw["cape_h"][day_idx], axis=0) if day_idx else raw["cape_h"][idx12[d]]
-        out["cape"][d] = to_grid(cape_day)
+    for mid in missing:
+        out: Dict[str, np.ndarray] = {k: np.zeros((D,) + grid.SHAPE, dtype=np.float32) for k in MODEL_PARAM_KEYS}
+        precip_run = np.zeros(n, dtype=np.float32)
+        snow_run = np.zeros(n, dtype=np.float32)
+        for d in range(D):
+            out["tmax"][d] = to_grid(raw[mid]["tmax"][d])
+            precip_run = precip_run + np.nan_to_num(raw[mid]["precip_d"][d])
+            snow_run = snow_run + np.nan_to_num(raw[mid]["snow_d"][d])
+            out["precip_accum"][d] = to_grid(precip_run.copy())
+            out["snow_accum"][d] = to_grid(snow_run.copy() / 2.54)  # cm → in
+            out["mslp"][d] = to_grid(raw[mid]["mslp"][idx12[d]])
+            z = to_grid(raw[mid]["z500"][idx12[d]])
+            valid = z != grid.NODATA
+            z[valid] = z[valid] / 10.0  # m → dam
+            out["z500"][d] = z
+            out["w250"][d] = to_grid(raw[mid]["w250"][idx12[d]])
+            out["gusts"][d] = to_grid(raw[mid]["gusts_d"][d])
+            # CAPE: daily max across the day's 6-hourly values (peaks mid-afternoon).
+            day_prefix = dates[d]
+            day_idx = [i for i, h in enumerate(hours) if h.startswith(day_prefix)]
+            cape_day = np.nanmax(raw[mid]["cape_h"][day_idx], axis=0) if day_idx else raw[mid]["cape_h"][idx12[d]]
+            out["cape"][d] = to_grid(cape_day)
 
-    np.savez_compressed(disk, dates=np.array(dates), **out)
-    result = (dates, out)
-    _current_cache[cache_id] = result  # type: ignore[assignment]
-    return result
+        np.savez_compressed(disk_for(mid), dates=np.array(dates), **out)
+        result = (dates, out)
+        _current_cache[f"{mid}:{run_key}:{spacing:g}"] = result  # type: ignore[assignment]
+        results[mid] = result
+    return results
 
 
 def fetch_daily_fields(run_date: str) -> Tuple[List[str], Dict[str, np.ndarray]]:
@@ -309,9 +362,10 @@ def fetch_daily_fields(run_date: str) -> Tuple[List[str], Dict[str, np.ndarray]]
     n = flat_lons.size
     coarse: Dict[str, np.ndarray] = {}
     dates: List[str] = []
+    budget = _BackoffBudget()  # one cumulative cap for the whole fetch
     for start in range(0, n, BATCH):
         sl = slice(start, min(start + BATCH, n))
-        results = _fetch_points(session, list(flat_lats[sl]), list(flat_lons[sl]))
+        results = _fetch_points(session, list(flat_lats[sl]), list(flat_lons[sl]), budget)
         if not dates:
             dates = results[0]["daily"]["time"]
             for var in DAILY_VARS:
