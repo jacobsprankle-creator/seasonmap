@@ -34,6 +34,7 @@ export interface LayerMeta {
   legend: {
     type: "gradient" | "categorical";
     colormap?: string;
+    stepped?: boolean;
     vmin?: number;
     vmax?: number;
     units?: string;

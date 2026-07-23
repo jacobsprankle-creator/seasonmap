@@ -10,6 +10,15 @@ import { ChatDrawer, type HighlightSpec } from "./chat/ChatDrawer";
 
 // Session-scoped meta cache — revisiting a tab must not re-flash the UI.
 const metaCache = new Map<string, LayerMeta>();
+
+/** Default slider position: the present — the first date at/after today —
+ * never the furthest-future frame. Falls back to the last date for
+ * archive-style layers whose dates are all in the past. */
+function defaultDate(m: LayerMeta): string | null {
+  if (!m.dates.length) return m.latest;
+  const today = new Date().toISOString().slice(0, 10);
+  return m.dates.find((d) => d.slice(0, 10) >= today) ?? m.dates[m.dates.length - 1];
+}
 import { DateSlider } from "./ui/DateSlider";
 import { FilterPanel } from "./ui/FilterPanel";
 import { LayerSwitcher } from "./ui/LayerSwitcher";
@@ -107,7 +116,7 @@ export default function App() {
     const cached = metaCache.get(layerId);
     if (cached) {
       setMeta(cached);
-      setDate((d) => (d && cached.dates.includes(d) ? d : cached.latest));
+      setDate((d) => (d && cached.dates.includes(d) ? d : defaultDate(cached)));
     } else {
       setMeta(null);
     }
@@ -120,7 +129,7 @@ export default function App() {
         metaCache.set(layerId, m);
         if (cancelled) return;
         setMeta(m);
-        setDate((d) => (d && m.dates.includes(d) ? d : m.latest));
+        setDate((d) => (d && m.dates.includes(d) ? d : defaultDate(m)));
       })
       .catch((e) => !cancelled && !cached && setMetaError(String(e)));
     return () => {

@@ -178,8 +178,66 @@ def _hex_to_rgba(color: str) -> Tuple[int, int, int, int]:
     raise ValueError(f"bad hex color: {color}")
 
 
+
+# ---------------------------------------------------------------------------
+# Stepped (banded) model palettes — classic weather-map bins, no smoothing.
+# Model layers point here; swap back to the smooth names to revert.
+# ---------------------------------------------------------------------------
+
+COLORMAPS.update({
+    "temp_f_step": [
+        (-10, "#7b2fbe"), (0, "#5e4fa2"), (10, "#3c6fc4"), (20, "#4393c3"),
+        (30, "#74c7d8"), (40, "#a6dba0"), (50, "#5aae61"), (60, "#c8e26a"),
+        (65, "#ffe066"), (70, "#ffc44d"), (75, "#ffa733"), (80, "#ff7f2a"),
+        (85, "#f4501e"), (90, "#d62f1f"), (95, "#b01c30"), (100, "#8e0f4d"),
+        (105, "#c231a1"), (110, "#f06ac5"),
+    ],
+    "precip_in_step": [
+        (0.0, "#00000000"), (0.01, "#b7e4b0"), (0.1, "#6cc069"), (0.25, "#2e9448"),
+        (0.5, "#f6ee54"), (1.0, "#f2b13c"), (1.5, "#ee7a30"), (2.0, "#e33f24"),
+        (3.0, "#b81d54"), (4.0, "#8f2f97"), (6.0, "#5c5cc9"),
+    ],
+    "snow_in_step": [
+        (0.0, "#00000000"), (0.1, "#bdd7e7"), (1.0, "#6baed6"), (2.0, "#3182bd"),
+        (4.0, "#08519c"), (6.0, "#5e3c99"), (8.0, "#8b4bab"), (12.0, "#b25fbc"),
+        (18.0, "#d977c8"), (24.0, "#f79fd6"),
+    ],
+    "mslp_step": [
+        (980, "#5e4fa2"), (988, "#3288bd"), (996, "#66a5cc"), (1004, "#99c9a3"),
+        (1012, "#e6e2b8"), (1016, "#e0c07a"), (1024, "#cf8c4e"), (1032, "#b25636"),
+        (1040, "#8c2d1e"),
+    ],
+    "z500_step": [
+        (522, "#5e4fa2"), (534, "#3f61c4"), (546, "#3288bd"), (552, "#59a8b8"),
+        (558, "#79c5a4"), (564, "#a8d888"), (570, "#dbe98a"), (576, "#ffe066"),
+        (582, "#fdae42"), (588, "#f2652f"), (594, "#d62f1f"), (600, "#a01327"),
+    ],
+    "w250_step": [
+        (0, "#00000000"), (50, "#c8c8d8"), (70, "#95a8d8"), (90, "#5f7fd8"),
+        (110, "#4b4fc4"), (130, "#7a3fbe"), (150, "#b23fb2"), (175, "#e35fc4"),
+        (200, "#ff9fd8"),
+    ],
+    "gust_step": [
+        (0, "#00000000"), (10, "#cfe3c0"), (20, "#8fcf8a"), (30, "#f6ee54"),
+        (40, "#f2b13c"), (50, "#ee7a30"), (60, "#e33f24"), (70, "#b81d54"),
+        (80, "#8f2f97"),
+    ],
+    "cape_step": [
+        (0, "#00000000"), (250, "#b7e4b0"), (500, "#6cc069"), (1000, "#f6ee54"),
+        (1500, "#f2b13c"), (2000, "#ee7a30"), (2500, "#e33f24"), (3000, "#b81d54"),
+        (4000, "#8f2f97"),
+    ],
+})
+
+# Colormaps rendered as DISCRETE bands (no interpolation between stops).
+STEPPED = {
+    "temp_f_step", "precip_in_step", "snow_in_step", "mslp_step",
+    "z500_step", "w250_step", "gust_step", "cape_step",
+}
+
+
 def build_colormap(
-    stops: Sequence[Stop], vmin: float, vmax: float
+    stops: Sequence[Stop], vmin: float, vmax: float, stepped: bool = False
 ) -> Dict[int, Tuple[int, int, int, int]]:
     """Expand stops into a rio-tiler colormap: {0..255: (r, g, b, a)}.
 
@@ -198,6 +256,13 @@ def build_colormap(
             continue
         if i >= xs[-1]:
             cmap[i] = cs[-1]
+            continue
+        if stepped:
+            k = 0
+            for j, x in enumerate(xs):
+                if i >= x:
+                    k = j
+            cmap[i] = cs[k]
             continue
         for k in range(len(xs) - 1):
             if xs[k] <= i <= xs[k + 1]:
@@ -222,6 +287,8 @@ def legend_json(name: str, vmin: float, vmax: float, units: str) -> dict:
         "units": units,
         "stops": [{"value": v, "color": c} for v, c in stops],
     }
+    if name in STEPPED:
+        out["stepped"] = True
     if name in LEGEND_LABELS:
         out["labels"] = LEGEND_LABELS[name]
     return out
