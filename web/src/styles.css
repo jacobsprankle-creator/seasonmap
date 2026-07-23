@@ -217,3 +217,47 @@ html, body, #root { margin: 0; height: 100%; }
 @media (min-width: 720px) {
   .bottombar { left: 50%; right: auto; transform: translateX(-50%); width: min(640px, 92vw); }
 }
+
+/* ── Overlay pills — stackable live layers over any base ─────────────── */
+.overlay-bar {
+  position: absolute;
+  top: 118px;
+  right: 10px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+.overlay-bar-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7a72;
+  text-align: center;
+}
+.overlay-bar .chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-start;
+}
+.ovl-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c3cdc7;
+  flex: 0 0 auto;
+}
+.ovl-dot-on {
+  background: #7ee2a1;
+  box-shadow: 0 0 5px rgba(46, 204, 113, 0.8);
+}
+@media (max-width: 720px) {
+  .overlay-bar { top: auto; bottom: 132px; right: 8px; padding: 6px; }
+}

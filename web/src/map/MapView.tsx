@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 // @ts-ignore — ships without types
 import protomapsLayers from "protomaps-themes-base";
 import { CONUS_BOUNDS, DATA_BASE } from "../config";
+import type { OverlayDef } from "../types";
 
 // Serve PMTiles straight from object storage via range requests.
 const protocol = new Protocol();
@@ -108,9 +109,11 @@ interface Props {
   sample?: (lng: number, lat: number) => Promise<string>;
   pins?: Pin[];
   onClickInfo?: (info: { lat: number; lng: number; feature: Record<string, unknown> | null }) => void;
+  /** Active overlay definitions — rendered above every thematic layer. */
+  overlays?: OverlayDef[];
 }
 
-export function MapView({ tilesUrl, vector, external, featureFilter, viewport = "conus", animFrames = null, animFrame = 5, rasterOpacity, maxzoom, frameUrls = null, frameIndex = 0, initialView, onViewChange, sample, pins, onClickInfo }: Props) {
+export function MapView({ tilesUrl, vector, external, featureFilter, viewport = "conus", animFrames = null, animFrame = 5, rasterOpacity, maxzoom, frameUrls = null, frameIndex = 0, initialView, onViewChange, sample, pins, onClickInfo, overlays }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<MLMap | null>(null);
   const [styleReady, setStyleReady] = useState(false);
@@ -178,6 +181,13 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
           source: "world-mask",
           paint: { "fill-color": "#e8ebee", "fill-opacity": 0.75 },
         }, labelAnchor.current);
+        // Overlay anchor: thematic layers insert BELOW this, overlays insert
+        // ABOVE it (before the labels) — so base-layer swaps can never paint
+        // over an active overlay. Invisible; exists purely for z-ordering.
+        m.addLayer(
+          { id: "ovl-anchor", type: "background", paint: { "background-opacity": 0 } },
+          labelAnchor.current
+        );
         setStyleReady(true);
       });
       if (!initialView.center && initialView.zoom === undefined) {
@@ -410,7 +420,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         type: "raster",
         source: src,
         paint: { "raster-opacity": external.opacity, "raster-fade-duration": 150 },
-      }, labelAnchor.current);
+      }, "ovl-anchor");
     } else {
       map.addSource(src, {
         type: "raster",
@@ -427,7 +437,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
           "raster-resampling": "linear",
           "raster-fade-duration": 150,
         },
-      }, labelAnchor.current);
+      }, "ovl-anchor");
     }
     curThematic.current = lyr;
     // Old layer lingers briefly UNDER the incoming one, then goes — no gap.
@@ -464,7 +474,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       map.addLayer({
         id: `hf-${i}`, type: "raster", source: `hf-src-${i}`,
         paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-resampling": "linear" },
-      }, labelAnchor.current);
+      }, "ovl-anchor");
       framesMounted.current.add(i);
     };
     // seed around the current frame, then buffer outward
@@ -488,7 +498,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       if (frameIndex >= 0 && frameIndex < frameUrls.length && !map.getSource(`hf-src-${frameIndex}`)) {
         map.addSource(`hf-src-${frameIndex}`, { type: "raster", url: `pmtiles://${frameUrls[frameIndex]}`, tileSize: 256, maxzoom });
         map.addLayer({ id: `hf-${frameIndex}`, type: "raster", source: `hf-src-${frameIndex}`,
-          paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-resampling": "linear" } }, labelAnchor.current);
+          paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-resampling": "linear" } }, "ovl-anchor");
         framesMounted.current.add(frameIndex);
       }
     }
@@ -537,7 +547,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
           baseFill
         ),
       },
-    }, labelAnchor.current);
+    }, "ovl-anchor");
     // Polygon outlines make alert/outlook/drought areas pop against the basemap.
     map.addLayer({
       id: "vec-outline",
@@ -545,7 +555,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       source: VECTOR_SOURCE,
       filter: ["==", ["geometry-type"], "Polygon"],
       paint: { "line-color": colorExpr, "line-width": state(3.5, 2.6, 1.6), "line-opacity": 0.9 },
-    }, labelAnchor.current);
+    }, "ovl-anchor");
     map.addLayer({
       id: "vec-line",
       type: "line",
@@ -563,7 +573,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         ],
         "line-opacity": state(1, 1, 0.85),
       },
-    }, labelAnchor.current);
+    }, "ovl-anchor");
     const r = vector.circleRadius ?? 8;
     map.addLayer({
       id: "vec-circle",
@@ -576,7 +586,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         "circle-stroke-color": state("#1c2321", "#ffffff", "#ffffff"),
         "circle-stroke-width": state(3, 2.5, r < 6 ? 1 : 2),
       },
-    }, labelAnchor.current);
+    }, "ovl-anchor");
   }, [map, styleReady, vector]);
 
   // Animated live layers (radar, satellite): six timestamped frame sources;
@@ -601,7 +611,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         type: "raster",
         source: ANIM_IDS[i],
         paint: { "raster-opacity": 0, "raster-fade-duration": 0 },
-      }, labelAnchor.current);
+      }, "ovl-anchor");
     });
     if (cur && map.getLayer(cur)) map.setPaintProperty(cur, "raster-opacity", 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -692,6 +702,128 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       popups.forEach((pp) => pp.remove());
     };
   }, [map, pins]);
+
+
+  // ── Overlays: independent live stack above every thematic layer ─────────
+  // Each overlay owns ovl-{id}* layers + an ovl-src-{id} source, inserted
+  // before the label anchor (= above ovl-anchor, above all thematic layers,
+  // below city names). Toggling a base layer never touches these.
+  const overlaysKey = (overlays ?? []).map((o) => o.id).join(",");
+  useEffect(() => {
+    if (!map || !styleReady) return;
+    const m = map;
+    const defs = overlays ?? [];
+    const timers: number[] = [];
+    const layerIds: string[] = [];
+    const srcIds: string[] = [];
+    const before = labelAnchor.current;
+    const EMPTY = { type: "FeatureCollection", features: [] } as GeoJSON.FeatureCollection;
+    const matchExpr = (prop: string, colors: { value: string; color: string }[], fallback: string) =>
+      ["match", ["get", prop], ...colors.flatMap((c) => [c.value, c.color]), fallback] as any;
+
+    for (const o of defs) {
+      const src = `ovl-src-${o.id}`;
+      try {
+        if (o.kind === "raster" && o.tiles) {
+          const add = (bust: string) => {
+            if (m.getLayer(`ovl-${o.id}`)) m.removeLayer(`ovl-${o.id}`);
+            if (m.getSource(src)) m.removeSource(src);
+            m.addSource(src, {
+              type: "raster",
+              tiles: o.tiles!.map((t) => t + bust),
+              tileSize: 256,
+              maxzoom: o.maxzoom ?? 12,
+            });
+            m.addLayer(
+              { id: `ovl-${o.id}`, type: "raster", source: src,
+                paint: { "raster-opacity": o.opacity ?? 0.8, "raster-fade-duration": 150 } },
+              before
+            );
+          };
+          add("");
+          if (o.refreshMs)
+            timers.push(window.setInterval(() => { try { add(`?_=${Date.now()}`); } catch { /* map gone */ } }, o.refreshMs));
+          layerIds.push(`ovl-${o.id}`);
+          srcIds.push(src);
+        } else if (o.kind === "alerts" && o.url) {
+          m.addSource(src, { type: "geojson", data: EMPTY });
+          const color = matchExpr("severity", o.colors ?? [], "#90a4ae");
+          m.addLayer(
+            { id: `ovl-${o.id}-fill`, type: "fill", source: src,
+              paint: { "fill-color": color, "fill-opacity": 0.1 } },
+            before
+          );
+          m.addLayer(
+            { id: `ovl-${o.id}-line`, type: "line", source: src,
+              paint: { "line-color": color, "line-width": 1.5, "line-opacity": 0.85 } },
+            before
+          );
+          const load = async () => {
+            try {
+              const r = await fetch(o.url!, { headers: { Accept: "application/geo+json" } });
+              const gj = (await r.json()) as GeoJSON.FeatureCollection;
+              gj.features = (gj.features ?? []).filter((f) => f.geometry);
+              (m.getSource(src) as maplibregl.GeoJSONSource | undefined)?.setData(gj);
+            } catch { /* transient — next refresh retries */ }
+          };
+          load();
+          if (o.refreshMs) timers.push(window.setInterval(load, o.refreshMs));
+          layerIds.push(`ovl-${o.id}-fill`, `ovl-${o.id}-line`);
+          srcIds.push(src);
+        } else if (o.kind === "storms") {
+          m.addSource(src, { type: "geojson", data: EMPTY });
+          const cat = matchExpr("cat", o.colors ?? [], "#9aa5b1");
+          m.addLayer(
+            { id: `ovl-${o.id}-cone`, type: "fill", source: src,
+              filter: ["==", ["geometry-type"], "Polygon"],
+              paint: { "fill-color": "#5c6bc0", "fill-opacity": 0.1 } },
+            before
+          );
+          m.addLayer(
+            { id: `ovl-${o.id}-coneline`, type: "line", source: src,
+              filter: ["==", ["geometry-type"], "Polygon"],
+              paint: { "line-color": "#5c6bc0", "line-width": 1, "line-opacity": 0.5, "line-dasharray": [2, 2] } },
+            before
+          );
+          m.addLayer(
+            { id: `ovl-${o.id}-track`, type: "line", source: src,
+              filter: ["==", ["geometry-type"], "LineString"],
+              layout: { "line-cap": "round", "line-join": "round" },
+              paint: { "line-color": cat, "line-width": 2.4, "line-opacity": 0.95 } },
+            before
+          );
+          m.addLayer(
+            { id: `ovl-${o.id}-pos`, type: "circle", source: src,
+              filter: ["==", ["geometry-type"], "Point"],
+              paint: { "circle-radius": 4.5, "circle-color": cat,
+                       "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.5 } },
+            before
+          );
+          const load = async () => {
+            try {
+              const meta = await (await fetch(`${DATA_BASE}/meta/hurricanes_active/latest.json`)).json();
+              const d = meta.latest ?? meta.dates?.[meta.dates.length - 1];
+              if (!d || !meta.data) return;
+              const gj = await (await fetch(`${DATA_BASE}/${meta.data.replace("{date}", d)}`)).json();
+              (m.getSource(src) as maplibregl.GeoJSONSource | undefined)?.setData(gj);
+            } catch { /* no active-storm data — overlay stays empty */ }
+          };
+          load();
+          layerIds.push(`ovl-${o.id}-cone`, `ovl-${o.id}-coneline`, `ovl-${o.id}-track`, `ovl-${o.id}-pos`);
+          srcIds.push(src);
+        }
+      } catch { /* one overlay failing must not take the rest down */ }
+    }
+
+    return () => {
+      timers.forEach((t) => window.clearInterval(t));
+      try {
+        for (const id of layerIds) if (m.getLayer(id)) m.removeLayer(id);
+        for (const id of srcIds) if (m.getSource(id)) m.removeSource(id);
+      } catch { /* map already destroyed */ }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, styleReady, overlaysKey]);
 
   return <div ref={container} className="map" />;
 }

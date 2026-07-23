@@ -5,7 +5,8 @@ import { MapView, type Pin } from "./map/MapView";
 import { nwsPointInfo } from "./map/nws";
 import { formatValue, sampleValue } from "./map/sampler";
 import { readUrlState, writeUrlState } from "./state/url";
-import { baseLayerFor, LAYER_DEFS, type LayerMeta } from "./types";
+import { OverlayBar } from "./ui/OverlayBar";
+import { baseLayerFor, LAYER_DEFS, type LayerMeta, OVERLAY_DEFS } from "./types";
 import { ChatDrawer, type HighlightSpec } from "./chat/ChatDrawer";
 
 // Session-scoped meta cache — revisiting a tab must not re-flash the UI.
@@ -37,6 +38,16 @@ export default function App() {
     return dflt ? dflt.id : first.id;
   });
   const baseLayer = baseLayerFor(layerId);
+  const [overlayIds, setOverlayIds] = useState<string[]>(initial.overlays ?? []);
+  const toggleOverlay = useCallback(
+    (id: string) =>
+      setOverlayIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id])),
+    []
+  );
+  const activeOverlays = useMemo(
+    () => OVERLAY_DEFS.filter((o) => overlayIds.includes(o.id)),
+    [overlayIds]
+  );
   const [meta, setMeta] = useState<LayerMeta | null>(null);
   const [metaError, setMetaError] = useState<string | null>(null);
   const [date, setDate] = useState<string | null>(initial.date ?? null);
@@ -142,8 +153,8 @@ export default function App() {
   }, [layerId, external, externalVec]);
 
   useEffect(() => {
-    if (date) writeUrlState({ layer: layerId, date, ...view });
-  }, [layerId, date, view]);
+    if (date) writeUrlState({ layer: layerId, date, overlays: overlayIds, ...view });
+  }, [layerId, date, view, overlayIds]);
 
   const onViewChange = useCallback(
     (zoom: number, center: [number, number]) => setView({ zoom, center }),
@@ -239,6 +250,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <OverlayBar active={overlayIds} onToggle={toggleOverlay} />
       <ErrorBoundary label="Map">
         <MapView
           tilesUrl={tilesUrl}
@@ -260,6 +272,7 @@ export default function App() {
           onViewChange={onViewChange}
           sample={sample}
           pins={pins}
+          overlays={activeOverlays}
           onClickInfo={setLastClick}
         />
       </ErrorBoundary>

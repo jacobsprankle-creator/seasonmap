@@ -118,6 +118,64 @@ const spcDay = (n: number, isDefault = false) => ({
   },
 });
 
+/** Overlays — thin live layers that stack on TOP of whatever base layer is
+ *  active: radar over a model run, alert polygons over foliage, live storm
+ *  tracks over water temperature. Multiple overlays can be on at once; the
+ *  active set rides the URL (?ov=radar,alerts). Future NODD layers (GLM
+ *  lightning, MRMS) slot in as new entries here. */
+export interface OverlayDef {
+  id: string;
+  label: string;
+  kind: "raster" | "alerts" | "storms";
+  tiles?: string[];
+  opacity?: number;
+  maxzoom?: number;
+  url?: string;
+  colors?: { value: string; color: string }[];
+  refreshMs?: number;
+}
+
+export const OVERLAY_DEFS: OverlayDef[] = [
+  {
+    id: "radar",
+    label: "Radar",
+    kind: "raster",
+    tiles: [
+      "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/nexrad-n0q-900913/{z}/{x}/{y}.png",
+    ],
+    opacity: 0.78,
+    maxzoom: 12,
+    refreshMs: 300_000, // NEXRAD composite refreshes ~5 min
+  },
+  {
+    id: "alerts",
+    label: "Alerts",
+    kind: "alerts",
+    url: "https://api.weather.gov/alerts/active?status=actual&message_type=alert",
+    colors: [
+      { value: "Extreme", color: "#b71c1c" },
+      { value: "Severe", color: "#f57c00" },
+      { value: "Moderate", color: "#fbc02d" },
+      { value: "Minor", color: "#78909c" },
+    ],
+    refreshMs: 180_000,
+  },
+  {
+    id: "storms",
+    label: "Storms",
+    kind: "storms",
+    colors: [
+      { value: "TD", color: "#9aa5b1" },
+      { value: "TS", color: "#5ba7d1" },
+      { value: "1", color: "#f2d15c" },
+      { value: "2", color: "#f0a13c" },
+      { value: "3", color: "#e8642d" },
+      { value: "4", color: "#d02c2c" },
+      { value: "5", color: "#8e24aa" },
+    ],
+  },
+];
+
 /** Thematic layer registry — one active layer at a time in v1. */
 export const LAYER_DEFS: LayerDef[] = [
   {
