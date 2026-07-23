@@ -37,7 +37,7 @@ REGION = "us-west-2"
 LAT0, LAT1 = 22.0, 52.0     # CONUS window
 LONW, LONE = -127.0, -64.0  # CONUS window (degrees east, -180..180)
 ACC_HOURS = 192             # 8 lead days
-PARAM_KEYS = ["tmax", "precip_accum", "snow_accum", "mslp", "z500", "w250", "gusts", "cape"]
+PARAM_KEYS = ["tmax", "precip_accum", "precip_24h", "snow_accum", "mslp", "z500", "w250", "gusts", "cape"]
 
 # param -> (role, variable-file(s), agg). Tuple variable = u/v pair -> hypot.
 FAMILIES: Dict[str, dict] = {
@@ -46,6 +46,7 @@ FAMILIES: Dict[str, dict] = {
         "vars": [
             ("tmax", "sfc", "temperature_2m", "dmax"),
             ("precip_accum", "sfc", "precipitation", "acc"),
+            ("precip_24h", "sfc", "precipitation", "acc24"),
             ("snow_accum", "sfc", "snowfall_water_equivalent", "acc"),
             ("gusts", "prs", "wind_gusts_10m", "dmax"),
             ("cape", "prs", "cape", "dmax"),
@@ -59,6 +60,7 @@ FAMILIES: Dict[str, dict] = {
         "vars": [
             ("tmax", "sfc", "temperature_2m", "dmax"),
             ("precip_accum", "sfc", "precipitation", "acc"),
+            ("precip_24h", "sfc", "precipitation", "acc24"),
             ("snow_accum", "sfc", "snowfall_water_equivalent", "acc"),
             ("gusts", "sfc", "wind_gusts_10m", "dmax"),
             ("cape", "sfc", "cape", "dmax"),
@@ -72,6 +74,7 @@ FAMILIES: Dict[str, dict] = {
         "vars": [
             ("tmax", "sfc", "temperature_2m", "dmax"),
             ("precip_accum", "sfc", "precipitation", "acc"),
+            ("precip_24h", "sfc", "precipitation", "acc24"),
             ("snow_accum", "sfc", "snowfall_water_equivalent", "acc"),
             ("gusts", "sfc", "wind_gusts_10m", "dmax"),
             ("cape", "sfc", "cape", "dmax"),
@@ -83,6 +86,7 @@ FAMILIES: Dict[str, dict] = {
         "vars": [
             ("tmax", "sfc", "temperature_2m", "dmax"),
             ("precip_accum", "sfc", "precipitation", "acc"),
+            ("precip_24h", "sfc", "precipitation", "acc24"),
             ("snow_accum", "sfc", "snowfall_water_equivalent", "acc"),
             ("gusts", "sfc", "wind_gusts_10m", "dmax"),
             ("cape", "sfc", "cape", "dmax"),
@@ -96,6 +100,7 @@ FAMILIES: Dict[str, dict] = {
         "vars": [
             ("tmax", "sfc", "temperature_2m", "dmax"),
             ("precip_accum", "sfc", "precipitation", "acc"),
+            ("precip_24h", "sfc", "precipitation", "acc24"),
             ("snow_accum", "sfc", "snowfall_water_equivalent", "acc"),
             ("gusts", "sfc", "wind_gusts_10m", "dmax"),
             ("cape", "sfc", "cape", "dmax"),
@@ -109,6 +114,7 @@ FAMILIES: Dict[str, dict] = {
         "vars": [
             ("tmax", "sfc", "temperature_2m", "dmax"),
             ("precip_accum", "sfc", "precipitation", "acc"),
+            ("precip_24h", "sfc", "precipitation", "acc24"),
             ("snow_accum", "sfc", "snowfall_water_equivalent", "acc"),
             ("gusts", "sfc", "wind_gusts_10m", "dmax"),
             ("cape", "prs", "cape", "dmax"),
@@ -136,7 +142,7 @@ def _convert(param: str, unit: str, arr: np.ndarray) -> np.ndarray:
         if "gpm" in u or u in ("m", "meter", "metre", "meters"):
             return arr / 10.0  # m -> dam
         return arr / 10.0
-    if param == "precip_accum":
+    if param in ("precip_accum", "precip_24h"):
         if "inch" in u:
             return arr
         return arr / 25.4  # mm -> in
@@ -378,6 +384,12 @@ def _fetch_family(mid: str) -> Tuple[List[str], Dict[str, np.ndarray]]:
                     idx = np.where(days <= np.datetime64(d))[0]
                     if idx.size:
                         frames[i] = ref.to_canonical(_convert(param, ref.unit, run_sum[idx[-1]]))
+            elif agg == "acc24":
+                for i, d in enumerate(date_objs):
+                    idx = np.where(days == np.datetime64(d))[0]
+                    if idx.size:
+                        field = np.nansum(np.nan_to_num(cube[idx]), axis=0)
+                        frames[i] = ref.to_canonical(_convert(param, ref.unit, field))
             elif agg == "dmax":
                 for i, d in enumerate(date_objs):
                     idx = np.where(days == np.datetime64(d))[0]

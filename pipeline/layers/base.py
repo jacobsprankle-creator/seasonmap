@@ -49,6 +49,7 @@ class LayerOutput:
     description: str
     extra_meta: dict = field(default_factory=dict)
     contour_interval: float | None = None  # burn contour lines every N units (synoptic fields)
+    contour_values: np.ndarray | None = None  # composite: contour a DIFFERENT field over the fill
 
     def __post_init__(self) -> None:
         if self.values.shape != grid.SHAPE:

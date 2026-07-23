@@ -169,7 +169,7 @@ MODEL_DAILY = ["temperature_2m_max", "precipitation_sum", "snowfall_sum", "wind_
 MODEL_HOURLY = ["pressure_msl", "geopotential_height_500hPa", "wind_speed_250hPa", "cape"]
 
 
-MODEL_PARAM_KEYS = ["tmax", "precip_accum", "snow_accum", "mslp", "z500", "w250", "gusts", "cape"]
+MODEL_PARAM_KEYS = ["tmax", "precip_accum", "precip_24h", "snow_accum", "mslp", "z500", "w250", "gusts", "cape"]
 
 
 def fetch_model_fields(model_id: str, run_key: str):
@@ -319,6 +319,7 @@ def fetch_models_batch(model_ids: List[str], run_key: str) -> Dict[str, tuple]:
             precip_run = precip_run + np.nan_to_num(raw[mid]["precip_d"][d])
             snow_run = snow_run + np.nan_to_num(raw[mid]["snow_d"][d])
             out["precip_accum"][d] = to_grid(precip_run.copy())
+            out["precip_24h"][d] = to_grid(np.nan_to_num(raw[mid]["precip_d"][d]))
             out["snow_accum"][d] = to_grid(snow_run.copy() / 2.54)  # cm → in
             out["mslp"][d] = to_grid(raw[mid]["mslp"][idx12[d]])
             z = to_grid(raw[mid]["z500"][idx12[d]])

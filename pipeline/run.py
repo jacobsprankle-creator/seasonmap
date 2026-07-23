@@ -78,7 +78,7 @@ def run_layer(layer_name: str, run_date: str, publisher, max_zoom: int) -> List[
         last_output = out
         cog_path = str(workdir / f"{date}.tif")
         pmt_path = str(workdir / f"{date}.pmtiles")
-        tiling.write_cog(out.values, cog_path)
+        tiling.write_cog(out.values, cog_path, second_band=getattr(out, "contour_values", None))
         cmap = colormaps.build_colormap(
             colormaps.COLORMAPS[out.colormap], out.vmin, out.vmax,
             stepped=out.colormap in getattr(colormaps, "STEPPED", set()),

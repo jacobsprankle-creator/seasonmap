@@ -18,7 +18,7 @@ from .base import LayerOutput
 MODELS = [
     ("gfs", "gfs_seamless", "GFS", None),
     ("euro", "ecmwf_ifs025", "ECMWF", None),
-    ("hrrr", "gfs_hrrr", "HRRR", {"tmax", "precip", "snow", "mslp", "gusts", "cape"}),  # 48h CONUS mesoscale
+    ("hrrr", "gfs_hrrr", "HRRR", {"tmax", "precip", "precip24", "sfc", "snow", "mslp", "gusts", "cape"}),  # 48h CONUS mesoscale
     ("ukmet", "ukmo_seamless", "UKMET", None),
     ("icon", "icon_seamless", "ICON (DWD)", None),
     ("gem", "gem_seamless", "GEM (Canadian)", None),
@@ -27,6 +27,7 @@ MODELS = [
 PARAMS = [
     ("tmax", "tmax", "temp_f", -10, 110, "°F", "daily high temperature", True),
     ("precip", "precip_accum", "precip_in_step", 0, 6, "in", "accumulated precipitation", True),
+    ("precip24", "precip_24h", "precip_in_step", 0, 4, "in", "24-hour precipitation", True),
     ("snow", "snow_accum", "snow_in_step", 0, 24, "in", "accumulated snowfall", True),
     ("mslp", "mslp", "mslp_hpa", 980, 1040, "hPa", "mean sea-level pressure (12Z)", False),
     ("z500", "z500", "z500_dam", 522, 600, "dam", "500 mb heights (12Z)", False),
@@ -78,9 +79,49 @@ def _make(model_slug: str, model_id: str, model_label: str, p):
     return ns
 
 
+def _make_sfc(model_slug: str, model_id: str, model_label: str):
+    """Classic surface map: MSLP isobars burned over 24-h precipitation fill."""
+    slug = f"{model_slug}_sfc"
+
+    def dates_for(run_date: str) -> List[str]:
+        dates, _ = open_meteo.fetch_model_fields(model_id, _key())
+        return dates
+
+    def score(date: str) -> LayerOutput:
+        dates, fields = open_meteo.fetch_model_fields(model_id, _key())
+        i = dates.index(date)
+        values = fields["precip_24h"][i].copy()
+        land = ensure_tmin_normals()[0] != grid.NODATA
+        values[~land] = grid.NODATA
+        return LayerOutput(
+            layer=slug,
+            date=date,
+            values=values,
+            colormap="precip_in_step",
+            vmin=0.0,
+            vmax=4.0,
+            units="in",
+            description=f"{model_label} surface map — MSLP isobars (4 hPa) over 24-h precipitation",
+            extra_meta={"value_format": "number", "opacity": 0.66},
+            contour_interval=4.0,
+            contour_values=fields["mslp"][i].copy(),
+        )
+
+    ns = type(slug, (), {})
+    ns.LAYER = slug
+    ns.IMPLEMENTED = True
+    ns.dates_for = staticmethod(dates_for)
+    ns.score = staticmethod(score)
+    return ns
+
+
 MODULES = [
     _make(ms, mid, ml, p)
     for ms, mid, ml, subset in MODELS
     for p in PARAMS
     if subset is None or p[0] in subset
+] + [
+    _make_sfc(ms, mid, ml)
+    for ms, mid, ml, subset in MODELS
+    if subset is None or "sfc" in subset
 ]

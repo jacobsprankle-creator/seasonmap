@@ -89,12 +89,12 @@ jobs:
           # (run #8 post-mortem: groups fetched fine, then timed out rendering
           # 192 full pyramids).
           - group: models-a
-            layers: gfs_tmax,gfs_precip,gfs_snow,gfs_mslp,gfs_z500,gfs_w250,gfs_gusts,gfs_cape,euro_tmax,euro_precip,euro_snow,euro_mslp,euro_z500,euro_w250,euro_gusts,euro_cape,hrrr_tmax,hrrr_precip,hrrr_snow,hrrr_mslp,hrrr_gusts,hrrr_cape
+            layers: gfs_sfc,gfs_precip24,gfs_tmax,gfs_precip,gfs_snow,gfs_mslp,gfs_z500,gfs_w250,gfs_gusts,gfs_cape,euro_sfc,euro_precip24,euro_tmax,euro_precip,euro_snow,euro_mslp,euro_z500,euro_w250,euro_gusts,euro_cape,hrrr_sfc,hrrr_precip24,hrrr_tmax,hrrr_precip,hrrr_snow,hrrr_mslp,hrrr_gusts,hrrr_cape
             model_group: gfs_seamless,ecmwf_ifs025,gfs_hrrr
             maxzoom: 5
             timeout: 45
           - group: models-b
-            layers: ukmet_tmax,ukmet_precip,ukmet_snow,ukmet_mslp,ukmet_z500,ukmet_w250,ukmet_gusts,ukmet_cape,icon_tmax,icon_precip,icon_snow,icon_mslp,icon_z500,icon_w250,icon_gusts,icon_cape,gem_tmax,gem_precip,gem_snow,gem_mslp,gem_z500,gem_w250,gem_gusts,gem_cape
+            layers: ukmet_sfc,ukmet_precip24,ukmet_tmax,ukmet_precip,ukmet_snow,ukmet_mslp,ukmet_z500,ukmet_w250,ukmet_gusts,ukmet_cape,icon_sfc,icon_precip24,icon_tmax,icon_precip,icon_snow,icon_mslp,icon_z500,icon_w250,icon_gusts,icon_cape,gem_sfc,gem_precip24,gem_tmax,gem_precip,gem_snow,gem_mslp,gem_z500,gem_w250,gem_gusts,gem_cape
             model_group: ukmo_seamless,icon_seamless,gem_seamless
             maxzoom: 5
             timeout: 45

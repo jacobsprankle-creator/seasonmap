@@ -39,17 +39,24 @@ WEB_MERCATOR = morecantile.tms.get("WebMercatorQuad")
 # COG
 # ---------------------------------------------------------------------------
 
-def write_cog(arr: np.ndarray, dst_path: str) -> None:
-    """Write a canonical-grid array as a Cloud-Optimized GeoTIFF."""
+def write_cog(arr: np.ndarray, dst_path: str, second_band: "np.ndarray | None" = None) -> None:
+    """Write a canonical-grid array as a Cloud-Optimized GeoTIFF.
+
+    second_band: optional companion field (e.g. MSLP under a precip fill) —
+    band 2 drives contour lines in composite renders."""
     if arr.shape != grid.SHAPE:
         raise ValueError(f"array shape {arr.shape} != canonical {grid.SHAPE}")
     Path(dst_path).parent.mkdir(parents=True, exist_ok=True)
 
-    src_profile = grid.profile()
+    src_profile = dict(grid.profile())
+    if second_band is not None:
+        src_profile["count"] = 2
     cog_profile = cog_profiles.get("deflate")
     with MemoryFile() as mem:
         with mem.open(**src_profile) as tmp:
             tmp.write(grid.mask_invalid(arr), 1)
+            if second_band is not None:
+                tmp.write(grid.mask_invalid(second_band), 2)
         with mem.open() as src:
             cog_translate(
                 src,
@@ -93,12 +100,18 @@ def _render_tile(
         # isobars / isotachs).
         import numpy as _np
 
-        vals = img.data[0].astype("float64")
+        band = 1 if img.data.shape[0] > 1 else 0  # composite: contour the 2nd band
+        vals = img.data[band].astype("float64")
         valid = img.mask.astype(bool)
         q = _np.floor(vals / float(contour_interval))
         edge = _np.zeros(q.shape, dtype=bool)
         edge[1:, :] |= (q[1:, :] != q[:-1, :]) & valid[1:, :] & valid[:-1, :]
         edge[:, 1:] |= (q[:, 1:] != q[:, :-1]) & valid[:, 1:] & valid[:, :-1]
+    if img.data.shape[0] > 1:
+        # Composite tile: fill renders from band 0 only.
+        from rio_tiler.models import ImageData as _ImageData
+
+        img = _ImageData(img.data[:1], img.mask, assets=img.assets, crs=img.crs, bounds=img.bounds)
     img.rescale(in_range=((vmin, vmax),))
     if edge is not None and edge.any():
         try:
@@ -108,7 +121,12 @@ def _render_tile(
             rgba.data[2][edge] = 48
             if rgba.data.shape[0] > 3:
                 rgba.data[3][edge] = 235
-            return rgba.render(img_format="PNG", add_mask=False)
+                return rgba.render(img_format="PNG", add_mask=False)
+            # 3-band RGB + alpha-in-mask (rio-tiler folds colormap alpha into
+            # the mask): keep the mask so transparency survives, and mark the
+            # contour pixels visible in it.
+            rgba.mask[edge] = 255
+            return rgba.render(img_format="PNG")
         except Exception:
             pass  # older rio-tiler without apply_colormap — fill only
     return img.render(img_format="PNG", colormap=colormap)
