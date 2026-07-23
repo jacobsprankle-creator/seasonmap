@@ -84,14 +84,20 @@ jobs:
           # Models ride a 1° grid and the API's multi-model batching: each
           # job below makes ONE grid pass for its three models (~24× fewer
           # API calls than the original 6 × 0.5° jobs — quota-safe).
+          # Model rasters come from a 1° grid — zoom 5 tiles are visually
+          # identical at synoptic scale and 16× cheaper to render than zoom 7
+          # (run #8 post-mortem: groups fetched fine, then timed out rendering
+          # 192 full pyramids).
           - group: models-a
             layers: gfs_tmax,gfs_precip,gfs_snow,gfs_mslp,gfs_z500,gfs_w250,gfs_gusts,gfs_cape,euro_tmax,euro_precip,euro_snow,euro_mslp,euro_z500,euro_w250,euro_gusts,euro_cape,hrrr_tmax,hrrr_precip,hrrr_snow,hrrr_mslp,hrrr_gusts,hrrr_cape
             model_group: gfs_seamless,ecmwf_ifs025,gfs_hrrr
-            timeout: 60
+            maxzoom: 5
+            timeout: 45
           - group: models-b
             layers: ukmet_tmax,ukmet_precip,ukmet_snow,ukmet_mslp,ukmet_z500,ukmet_w250,ukmet_gusts,ukmet_cape,icon_tmax,icon_precip,icon_snow,icon_mslp,icon_z500,icon_w250,icon_gusts,icon_cape,gem_tmax,gem_precip,gem_snow,gem_mslp,gem_z500,gem_w250,gem_gusts,gem_cape
             model_group: ukmo_seamless,icon_seamless,gem_seamless
-            timeout: 60
+            maxzoom: 5
+            timeout: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -118,7 +124,8 @@ jobs:
         run: |
           python -m pipeline.run \
             --layer "${{ matrix.layers }}" \
-            --date "${{ github.event.inputs.date || 'today' }}"
+            --date "${{ github.event.inputs.date || 'today' }}" \
+            --max-zoom "${{ matrix.maxzoom || 7 }}"
 
   # ── 3. Manual single-layer runs (debugging) ────────────────────────────
   single:
