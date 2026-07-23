@@ -1,0 +1,46 @@
+name: basemap
+
+# One-shot(ish): extract a North-America cut of the Protomaps daily planet
+# build (HTTP ranged reads — no full download) and publish it to R2. Re-run
+# occasionally to refresh cartography.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get pmtiles CLI
+        run: |
+          curl -sL https://github.com/protomaps/go-pmtiles/releases/download/v1.22.1/go-pmtiles_1.22.1_Linux_x86_64.tar.gz | tar xz pmtiles
+          ./pmtiles version || true
+      - name: Extract North America (z0-10)
+        run: |
+          BUILD=$(date -u -d "2 days ago" +%Y%m%d)
+          echo "using build $BUILD"
+          ./pmtiles extract "https://build.protomaps.com/${BUILD}.pmtiles" na.pmtiles \
+            --bbox=-180,0,-30,75 --maxzoom=10
+          ls -lh na.pmtiles
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Upload to R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          pip -q install boto3
+          python - <<'PY'
+          import boto3, os
+          c = boto3.client("s3",
+              endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
+              aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+              aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"])
+          c.upload_file("na.pmtiles", os.environ["R2_BUCKET"], "basemap/na.pmtiles",
+                        ExtraArgs={"ContentType": "application/octet-stream"},
+                        Config=boto3.s3.transfer.TransferConfig(multipart_chunksize=64*1024*1024))
+          print("uploaded basemap/na.pmtiles")
+          PY

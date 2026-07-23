@@ -1,7 +1,9 @@
 import maplibregl, { Map as MLMap } from "maplibre-gl";
 import { Protocol } from "pmtiles";
 import { useEffect, useRef, useState } from "react";
-import { CONUS_BOUNDS } from "../config";
+// @ts-ignore — ships without types
+import protomapsLayers from "protomaps-themes-base";
+import { CONUS_BOUNDS, DATA_BASE } from "../config";
 
 // Serve PMTiles straight from object storage via range requests.
 const protocol = new Protocol();
@@ -22,6 +24,25 @@ const BASEMAP_STYLE: maplibregl.StyleSpecification = {
     { id: "osm", type: "raster", source: "osm", paint: { "raster-saturation": -0.6, "raster-opacity": 0.9 } },
   ],
 };
+
+// Self-hosted Protomaps vector basemap (single PMTiles on R2). Falls back
+// to the raster OSM style until the basemap extract has been published.
+const VECTOR_BASEMAP_URL = `${DATA_BASE}/basemap/na.pmtiles`;
+function vectorStyle(): maplibregl.StyleSpecification {
+  return {
+    version: 8,
+    glyphs: "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf",
+    sprite: "https://protomaps.github.io/basemaps-assets/sprites/v4/light",
+    sources: {
+      basemap: {
+        type: "vector",
+        url: `pmtiles://${VECTOR_BASEMAP_URL}`,
+        attribution: "© OpenStreetMap contributors · Protomaps",
+      },
+    },
+    layers: (protomapsLayers as any)("basemap", "light"),
+  };
+}
 
 const THEMATIC_SOURCE = "thematic";
 const THEMATIC_LAYER = "thematic-raster";
@@ -99,6 +120,9 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
   vectorRef.current = vector;
   const clickInfoRef = useRef(onClickInfo);
   clickInfoRef.current = onClickInfo;
+  // Weather-under-labels: on the vector basemap, every data layer inserts
+  // BEFORE the first symbol (label) layer so city names float above the data.
+  const labelAnchor = useRef<string | undefined>(undefined);
 
   // Create the map only once the container has real dimensions.
   // Constructing MapLibre against a 0×0 container (or with `bounds` at
@@ -116,9 +140,10 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         raf = requestAnimationFrame(boot);
         return;
       }
+      const useVector = (boot as any)._vectorOk === true;
       const m = new maplibregl.Map({
         container: el,
-        style: BASEMAP_STYLE,
+        style: useVector ? vectorStyle() : BASEMAP_STYLE,
         center: initialView.center
           ? [initialView.center[1], initialView.center[0]]
           : CONUS_CENTER,
@@ -145,12 +170,14 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
             },
           },
         });
+        const sym = m.getStyle().layers?.find((l) => l.type === "symbol");
+        labelAnchor.current = sym?.id;
         m.addLayer({
           id: "world-mask",
           type: "fill",
           source: "world-mask",
           paint: { "fill-color": "#e8ebee", "fill-opacity": 0.75 },
-        });
+        }, labelAnchor.current);
         setStyleReady(true);
       });
       if (!initialView.center && initialView.zoom === undefined) {
@@ -303,7 +330,11 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       setMap(m);
     };
 
-    boot();
+    // Probe the self-hosted basemap once; boot with whichever style exists.
+    fetch(VECTOR_BASEMAP_URL, { headers: { Range: "bytes=0-127" } })
+      .then((r) => { (boot as any)._vectorOk = r.ok; })
+      .catch(() => { (boot as any)._vectorOk = false; })
+      .finally(() => boot());
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
@@ -379,7 +410,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         type: "raster",
         source: src,
         paint: { "raster-opacity": external.opacity, "raster-fade-duration": 150 },
-      });
+      }, labelAnchor.current);
     } else {
       map.addSource(src, {
         type: "raster",
@@ -396,7 +427,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
           "raster-resampling": "linear",
           "raster-fade-duration": 150,
         },
-      });
+      }, labelAnchor.current);
     }
     curThematic.current = lyr;
     // Old layer lingers briefly UNDER the incoming one, then goes — no gap.
@@ -433,7 +464,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       map.addLayer({
         id: `hf-${i}`, type: "raster", source: `hf-src-${i}`,
         paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-resampling": "linear" },
-      });
+      }, labelAnchor.current);
       framesMounted.current.add(i);
     };
     // seed around the current frame, then buffer outward
@@ -457,7 +488,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       if (frameIndex >= 0 && frameIndex < frameUrls.length && !map.getSource(`hf-src-${frameIndex}`)) {
         map.addSource(`hf-src-${frameIndex}`, { type: "raster", url: `pmtiles://${frameUrls[frameIndex]}`, tileSize: 256, maxzoom });
         map.addLayer({ id: `hf-${frameIndex}`, type: "raster", source: `hf-src-${frameIndex}`,
-          paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-resampling": "linear" } });
+          paint: { "raster-opacity": 0, "raster-fade-duration": 0, "raster-resampling": "linear" } }, labelAnchor.current);
         framesMounted.current.add(frameIndex);
       }
     }
@@ -506,7 +537,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
           baseFill
         ),
       },
-    });
+    }, labelAnchor.current);
     // Polygon outlines make alert/outlook/drought areas pop against the basemap.
     map.addLayer({
       id: "vec-outline",
@@ -514,7 +545,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       source: VECTOR_SOURCE,
       filter: ["==", ["geometry-type"], "Polygon"],
       paint: { "line-color": colorExpr, "line-width": state(3.5, 2.6, 1.6), "line-opacity": 0.9 },
-    });
+    }, labelAnchor.current);
     map.addLayer({
       id: "vec-line",
       type: "line",
@@ -532,7 +563,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         ],
         "line-opacity": state(1, 1, 0.85),
       },
-    });
+    }, labelAnchor.current);
     const r = vector.circleRadius ?? 8;
     map.addLayer({
       id: "vec-circle",
@@ -545,7 +576,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         "circle-stroke-color": state("#1c2321", "#ffffff", "#ffffff"),
         "circle-stroke-width": state(3, 2.5, r < 6 ? 1 : 2),
       },
-    });
+    }, labelAnchor.current);
   }, [map, styleReady, vector]);
 
   // Animated live layers (radar, satellite): six timestamped frame sources;
@@ -570,7 +601,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         type: "raster",
         source: ANIM_IDS[i],
         paint: { "raster-opacity": 0, "raster-fade-duration": 0 },
-      });
+      }, labelAnchor.current);
     });
     if (cur && map.getLayer(cur)) map.setPaintProperty(cur, "raster-opacity", 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
