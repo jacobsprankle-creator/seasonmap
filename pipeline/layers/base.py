@@ -48,6 +48,7 @@ class LayerOutput:
     units: str
     description: str
     extra_meta: dict = field(default_factory=dict)
+    contour_interval: float | None = None  # burn contour lines every N units (synoptic fields)
 
     def __post_init__(self) -> None:
         if self.values.shape != grid.SHAPE:

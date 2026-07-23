@@ -25,19 +25,22 @@ MODELS = [
 ]
 # (suffix, field, colormap, vmin, vmax, units, label, land_mask)
 PARAMS = [
-    ("tmax", "tmax", "temp_f_step", -10, 110, "°F", "daily high temperature", True),
+    ("tmax", "tmax", "temp_f", -10, 110, "°F", "daily high temperature", True),
     ("precip", "precip_accum", "precip_in_step", 0, 6, "in", "accumulated precipitation", True),
     ("snow", "snow_accum", "snow_in_step", 0, 24, "in", "accumulated snowfall", True),
-    ("mslp", "mslp", "mslp_step", 980, 1040, "hPa", "mean sea-level pressure (12Z)", False),
-    ("z500", "z500", "z500_step", 522, 600, "dam", "500 mb heights (12Z)", False),
+    ("mslp", "mslp", "mslp_hpa", 980, 1040, "hPa", "mean sea-level pressure (12Z)", False),
+    ("z500", "z500", "z500_dam", 522, 600, "dam", "500 mb heights (12Z)", False),
     ("w250", "w250", "w250_step", 0, 200, "mph", "250 mb jet wind (12Z)", False),
     ("gusts", "gusts", "gust_step", 0, 80, "mph", "peak wind gusts", True),
-    ("cape", "cape", "cape_step", 0, 4000, "J/kg", "CAPE (daily max instability)", True),
+    ("cape", "cape", "cape_jkg", 0, 4000, "J/kg", "CAPE (daily max instability)", True),
 ]
 
 
 def _key() -> str:
     return dt.datetime.utcnow().strftime("%Y-%m-%dT%H")
+
+
+CONTOURS = {"mslp": 4.0, "z500": 6.0, "w250": 20.0}  # hPa / dam / mph
 
 
 def _make(model_slug: str, model_id: str, model_label: str, p):
@@ -64,6 +67,7 @@ def _make(model_slug: str, model_id: str, model_label: str, p):
             units=units,
             description=f"{model_label} {label} — slider is forecast lead time",
             extra_meta={"value_format": "number", "opacity": 0.66},
+            contour_interval=CONTOURS.get(suffix),
         )
 
     ns = type(slug, (), {})

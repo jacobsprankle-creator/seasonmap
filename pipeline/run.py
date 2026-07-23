@@ -91,6 +91,7 @@ def run_layer(layer_name: str, run_date: str, publisher, max_zoom: int) -> List[
             out.vmax,
             max_zoom=max_zoom,
             metadata={"layer": layer_name, "date": date, "units": out.units},
+            contour_interval=getattr(out, "contour_interval", None),
         )
         publish.publish_layer_date(publisher, layer_name, date, cog_path, pmt_path)
         qg = querygrid.build_query_grid(out.values)

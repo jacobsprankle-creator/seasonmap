@@ -73,6 +73,7 @@ def _render_tile(
     colormap: Dict[int, Tuple[int, int, int, int]],
     vmin: float,
     vmax: float,
+    contour_interval: Optional[float] = None,
 ) -> Optional[bytes]:
     try:
         try:
@@ -85,7 +86,31 @@ def _render_tile(
         return None
     if not img.mask.any():  # fully masked / no data in tile
         return None
+    edge = None
+    if contour_interval:
+        # Traditional synoptic presentation: contour lines burned over the
+        # fill wherever the field crosses an interval boundary (isohypses /
+        # isobars / isotachs).
+        import numpy as _np
+
+        vals = img.data[0].astype("float64")
+        valid = img.mask.astype(bool)
+        q = _np.floor(vals / float(contour_interval))
+        edge = _np.zeros(q.shape, dtype=bool)
+        edge[1:, :] |= (q[1:, :] != q[:-1, :]) & valid[1:, :] & valid[:-1, :]
+        edge[:, 1:] |= (q[:, 1:] != q[:, :-1]) & valid[:, 1:] & valid[:, :-1]
     img.rescale(in_range=((vmin, vmax),))
+    if edge is not None and edge.any():
+        try:
+            rgba = img.apply_colormap(colormap)
+            rgba.data[0][edge] = 35
+            rgba.data[1][edge] = 38
+            rgba.data[2][edge] = 48
+            if rgba.data.shape[0] > 3:
+                rgba.data[3][edge] = 235
+            return rgba.render(img_format="PNG", add_mask=False)
+        except Exception:
+            pass  # older rio-tiler without apply_colormap — fill only
     return img.render(img_format="PNG", colormap=colormap)
 
 
@@ -98,6 +123,7 @@ def render_pmtiles(
     min_zoom: int = DEFAULT_MIN_ZOOM,
     max_zoom: int = DEFAULT_MAX_ZOOM,
     metadata: Optional[dict] = None,
+    contour_interval: Optional[float] = None,
 ) -> int:
     """Render a COG into a raster PMTiles archive. Returns tile count."""
     Path(pmtiles_path).parent.mkdir(parents=True, exist_ok=True)
@@ -107,7 +133,7 @@ def render_pmtiles(
     with Reader(cog_path) as reader:
         for z in range(min_zoom, max_zoom + 1):
             for t in WEB_MERCATOR.tiles(west, south, east, north, zooms=[z]):
-                data = _render_tile(reader, t.x, t.y, z, colormap, vmin, vmax)
+                data = _render_tile(reader, t.x, t.y, z, colormap, vmin, vmax, contour_interval)
                 if data is not None:
                     tiles.append((zxy_to_tileid(z, t.x, t.y), data))
 
