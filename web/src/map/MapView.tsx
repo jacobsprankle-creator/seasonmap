@@ -55,6 +55,9 @@ export interface VectorSpec {
   geometry: string; // advisory — all geometry types render via typed sublayers
   colorProp: string;
   hover: string[];
+  /** Property whose shared value groups features (e.g. one storm's segments)
+   *  so hover/select lights the WHOLE group, not one segment. */
+  groupProp?: string;
   colors: { value: string | number; color: string }[];
   fillOpacity?: number;
   circleRadius?: number;
@@ -167,19 +170,45 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       // --- Interaction feel ---------------------------------------------
       // Proximity hover: features light up when the cursor is NEAR them
       // (±8 px), not only when it's pixel-perfect on a 4 px dot. rAF-throttled.
-      let hoverId: number | string | undefined;
-      let selectedId: number | string | undefined;
-      const setState = (id: number | string | undefined, key: "hover" | "selected", prev: number | string | undefined) => {
+      let hoverIds: (number | string)[] = [];
+      let selectedIds: (number | string)[] = [];
+      let lastHoverTop: number | string | undefined;
+      // A feature expands to its whole GROUP (e.g. every segment of one
+      // storm) when the layer declares a groupProp — segments keep their own
+      // intensity colors; the entire path thickens/brightens together.
+      const expand = (f: maplibregl.MapGeoJSONFeature | undefined): (number | string)[] => {
+        if (!f || f.id === undefined) return [];
+        const gp = vectorRef.current?.groupProp;
+        const gv = gp ? (f.properties as any)?.[gp] : undefined;
+        if (gp && gv !== undefined && gv !== null && m.getSource(VECTOR_SOURCE)) {
+          try {
+            const feats = m.querySourceFeatures(VECTOR_SOURCE, {
+              filter: ["==", ["get", gp], gv] as any,
+            });
+            const ids = [...new Set(feats.map((q) => q.id).filter((x) => x !== undefined))];
+            if (ids.length) return ids as (number | string)[];
+          } catch {
+            /* fall through to single id */
+          }
+        }
+        return [f.id];
+      };
+      const applyState = (
+        ids: (number | string)[],
+        key: "hover" | "selected",
+        prev: (number | string)[]
+      ): (number | string)[] => {
         if (!m.getSource(VECTOR_SOURCE)) return prev;
         try {
-          if (prev !== undefined && prev !== id)
-            m.setFeatureState({ source: VECTOR_SOURCE, id: prev }, { [key]: false });
-          if (id !== undefined)
+          const next = new Set(ids);
+          for (const id of prev)
+            if (!next.has(id)) m.setFeatureState({ source: VECTOR_SOURCE, id }, { [key]: false });
+          for (const id of ids)
             m.setFeatureState({ source: VECTOR_SOURCE, id }, { [key]: true });
         } catch {
           /* source mid-swap */
         }
-        return id;
+        return ids;
       };
       let rafPending = false;
       let lastMove: maplibregl.MapMouseEvent | null = null;
@@ -201,13 +230,19 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
             { layers: present as unknown as string[] }
           );
           m.getCanvas().style.cursor = feats.length ? "pointer" : "";
-          hoverId = setState(feats[0]?.id as number | undefined, "hover", hoverId);
+          const top = feats[0]?.id;
+          if (top !== lastHoverTop) {
+            lastHoverTop = top;
+            hoverIds = applyState(expand(feats[0]), "hover", hoverIds);
+          } else if (!feats.length && hoverIds.length) {
+            hoverIds = applyState([], "hover", hoverIds);
+          }
         });
       });
       // Clicking a feature marks it "selected" (pops visually) until the
       // popup closes or the next click lands elsewhere.
       popup.on("close", () => {
-        selectedId = setState(undefined, "selected", selectedId);
+        selectedIds = applyState([], "selected", selectedIds);
       });
 
       m.on("click", async (e) => {
@@ -223,7 +258,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
             ],
             { layers: present as unknown as string[] }
           );
-          selectedId = setState(feats[0]?.id as number | undefined, "selected", selectedId);
+          selectedIds = applyState(expand(feats[0]), "selected", selectedIds);
           if (feats.length) {
             const p = feats[0].properties ?? {};
             clickInfoRef.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng, feature: p });

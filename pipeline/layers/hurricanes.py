@@ -22,7 +22,7 @@ CAT_COLORS = [
     {"value": "5", "color": "#8e24aa", "label": "Cat 5"},
 ]
 LEGEND = {"type": "categorical", "items": CAT_COLORS}
-STYLE = {"geometry": "line", "color_property": "cat", "hover": ["name", "year", "cat", "peak_cat", "max_wind_kt"]}
+STYLE = {"geometry": "line", "color_property": "cat", "hover": ["name", "year", "cat", "peak_cat", "max_wind_kt"], "group": "sid"}
 
 
 def _dates_for(run_date: str) -> List[str]:
@@ -45,6 +45,7 @@ def _features(selected) -> dict:
                     "geometry": {"type": "LineString", "coordinates": [[x1, y1], [x2, y2]]},
                     "properties": {
                         "name": s["name"],
+                        "sid": f"{s['name']}-{s['year']}",
                         "year": s["year"],
                         "cat": storms.saffir_simpson(w1),
                         "peak_cat": s["max_cat"],

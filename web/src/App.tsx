@@ -166,6 +166,7 @@ export default function App() {
           geometry: meta.style.geometry,
           colorProp: meta.style.color_property,
           hover: meta.style.hover,
+          groupProp: meta.style.group,
           colors: (meta.legend.items ?? []).map((i) => ({ value: i.value, color: i.color })),
           fillOpacity: meta.style.fill_opacity,
           circleRadius: meta.style.circle_radius,

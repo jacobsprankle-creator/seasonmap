@@ -19,6 +19,7 @@ export interface LayerMeta {
     geometry: string;
     color_property: string;
     hover: string[];
+    group?: string;
     fill_opacity?: number;
     circle_radius?: number;
   };
