@@ -422,11 +422,14 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       filter: ["==", ["geometry-type"], "LineString"],
       paint: {
         "line-color": colorExpr,
-        "line-width": state(
-          ["interpolate", ["linear"], ["zoom"], 3, 3.5, 6, 5.5, 9, 8],
-          ["interpolate", ["linear"], ["zoom"], 3, 2.2, 6, 3.5, 9, 5.5],
-          ["interpolate", ["linear"], ["zoom"], 3, 1, 6, 2, 9, 3.5]
-        ),
+        // NOTE: ["zoom"] may only appear in a TOP-LEVEL interpolate — the
+        // feature-state cases go at the output positions, never around it.
+        "line-width": [
+          "interpolate", ["linear"], ["zoom"],
+          3, state(3.5, 2.2, 1),
+          6, state(5.5, 3.5, 2),
+          9, state(8, 5.5, 3.5),
+        ],
         "line-opacity": state(1, 1, 0.85),
       },
     });
