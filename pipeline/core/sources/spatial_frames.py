@@ -46,6 +46,11 @@ STREAM_DOMAINS: Dict[str, List[Tuple[str, Tuple[str, ...]]]] = {
     # ~+36h then 3/6h to +264h. A statistical blend — no pressure_msl, so the
     # motion pair is temp + step precip (no isobar composite).
     "ncep_nbm_conus": [("ncep_nbm_conus", ("temperature_2m", "precipitation"))],
+    # AI models — ECMWF AIFS (operational ML forecast) and NOAA's experimental
+    # AI-GFS. Plain 0.25-deg regular grids, 6-hourly steps to +360/+384h,
+    # full motion trio including mslp.
+    "ecmwf_aifs025_single": [("ecmwf_aifs025_single", MOTION_VARS)],
+    "ncep_aigfs025": [("ncep_aigfs025", MOTION_VARS)],
 }
 
 _TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{4})\.om$")

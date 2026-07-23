@@ -56,7 +56,11 @@ Gridded (get_conditions etc.):
   official statistical consensus of the others (2.5km, hourly near-term,
   out to +264h); it carries nbm_tmax and nbm_precip3 only (a blend has no
   pressure field). Prefer NBM when the user asks "what's THE forecast"
-  rather than a specific model. LIVE hourly motion layers for EVERY model, streamed
+  rather than a specific model. AI models: aifs_ (ECMWF AIFS, the
+  operational machine-learning forecast, 6-hourly to +360h) and aigfs_
+  (NOAA's experimental AI-GFS, 6-hourly to +384h) — both carry _sfc,
+  _tmax, _precip3. Great for "what does the AI model say" comparisons
+  against the physical gfs_/euro_. LIVE hourly motion layers for EVERY model, streamed
   as frames land on the model's data feed: {model}_tmax 2-m temperature °F,
   {model}_precip3 per-step precipitation in, {model}_sfc surface map (MSLP
   isobars over step precip — point queries return the precip fill). Hourly

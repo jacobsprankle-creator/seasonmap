@@ -374,6 +374,30 @@ export const LAYER_DEFS: LayerDef[] = [
     ],
   })),
   {
+    id: "aifs",
+    group: "Models",
+    label: "AIFS (ECMWF AI)",
+    phase: 6,
+    available: true,
+    variants: [
+      { id: "aifs_sfc", label: "Sfc", isDefault: true },
+      { id: "aifs_tmax", label: "Temp" },
+      { id: "aifs_precip3", label: "Precip step" },
+    ],
+  },
+  {
+    id: "aigfs",
+    group: "Models",
+    label: "AI-GFS (NOAA)",
+    phase: 6,
+    available: true,
+    variants: [
+      { id: "aigfs_sfc", label: "Sfc", isDefault: true },
+      { id: "aigfs_tmax", label: "Temp" },
+      { id: "aigfs_precip3", label: "Precip step" },
+    ],
+  },
+  {
     id: "alerts",
     group: "Now",
     label: "Alerts (live)",

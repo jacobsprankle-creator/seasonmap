@@ -49,6 +49,8 @@ FAMILIES: List[Tuple[str, str, str, float]] = [
     ("icon", "icon_seamless", "ICON", 24.0),
     ("gem", "gem_seamless", "GEM", 24.0),
     ("nbm", "ncep_nbm_conus", "NBM", 24.0),  # NWS blend — temp + precip only (no mslp)
+    ("aifs", "ecmwf_aifs025_single", "AIFS", 24.0),  # ECMWF's operational AI model
+    ("aigfs", "ncep_aigfs025", "AIGFS", 24.0),       # NOAA's experimental AI-GFS
 ]
 MAX_ZOOM = 5
 KEEP_RUNS = 2      # runs with tiles on R2 (active + previous)

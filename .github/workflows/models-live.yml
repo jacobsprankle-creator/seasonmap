@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       families:
-        description: "Family slugs comma-separated (gfs,hrrr,euro,ukmet,icon,gem) or 'all'"
+        description: "Family slugs comma-separated (gfs,hrrr,euro,ukmet,icon,gem,nbm,aifs,aigfs) or 'all'"
         default: "all"
         required: false
 
