@@ -331,6 +331,17 @@ export const LAYER_DEFS: LayerDef[] = [
       { id: "conditions_wind", label: "Wind" },
     ],
   },
+  {
+    id: "nbm",
+    group: "Models",
+    label: "NBM (NWS Blend)",
+    phase: 6,
+    available: true,
+    variants: [
+      { id: "nbm_tmax", label: "Temp", isDefault: true },
+      { id: "nbm_precip3", label: "Precip step" },
+    ],
+  },
   ...[
     ["gfs", "GFS", true],
     ["euro", "Euro (ECMWF)", true],

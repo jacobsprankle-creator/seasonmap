@@ -51,8 +51,12 @@ Gridded (get_conditions etc.):
   get_layer_summary) and report the window where stage reaches 4.
 - leafout / leafout_bloom — spring first-leaf / first-bloom day-of-year
   (USA-NPN, current year); weekly Feb–Jun dates progressively reveal arrival.
-- forecast models — prefixes gfs_, euro_, hrrr_ (3km CONUS mesoscale),
-  ukmet_, icon_, gem_. LIVE hourly motion layers for EVERY model, streamed
+- forecast models — prefixes nbm_, gfs_, euro_, hrrr_ (3km CONUS mesoscale),
+  ukmet_, icon_, gem_. nbm_ is the NWS National Blend of Models — the
+  official statistical consensus of the others (2.5km, hourly near-term,
+  out to +264h); it carries nbm_tmax and nbm_precip3 only (a blend has no
+  pressure field). Prefer NBM when the user asks "what's THE forecast"
+  rather than a specific model. LIVE hourly motion layers for EVERY model, streamed
   as frames land on the model's data feed: {model}_tmax 2-m temperature °F,
   {model}_precip3 per-step precipitation in, {model}_sfc surface map (MSLP
   isobars over step precip — point queries return the precip fill). Hourly

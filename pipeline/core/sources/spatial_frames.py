@@ -42,6 +42,10 @@ STREAM_DOMAINS: Dict[str, List[Tuple[str, Tuple[str, ...]]]] = {
     "ukmo_seamless": [("ukmo_global_deterministic_10km", MOTION_VARS)],
     "icon_seamless": [("dwd_icon", MOTION_VARS)],
     "gem_seamless": [("cmc_gem_gdps_15km", MOTION_VARS)],
+    # NBM (NWS National Blend of Models): 2.5km NDFD Lambert grid, hourly to
+    # ~+36h then 3/6h to +264h. A statistical blend — no pressure_msl, so the
+    # motion pair is temp + step precip (no isobar composite).
+    "ncep_nbm_conus": [("ncep_nbm_conus", ("temperature_2m", "precipitation"))],
 }
 
 _TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{4})\.om$")
@@ -197,16 +201,45 @@ class _Geo:
     def window(self) -> Tuple[slice, slice]:
         return slice(self.r0, self.r1), slice(self.c0, self.c1)
 
+    def _mesh(self):
+        """Canonical-cell -> source fractional (row, col), cached per domain.
+        Exact vectorized pyproj math — deterministic across GDAL versions, and
+        bilinear is indistinguishable from cubic at our zoom<=5 tiles. (City-
+        validated against direct point sampling for HRRR and NBM Lamberts.)"""
+        if getattr(self, "_mesh_rc", None) is None:
+            from pyproj import Transformer
+
+            t = grid.TRANSFORM
+            lon = t[2] + t[0] * (np.arange(grid.WIDTH) + 0.5)
+            lat = t[5] + t[4] * (np.arange(grid.HEIGHT) + 0.5)
+            LON, LAT = np.meshgrid(lon, lat)
+            fwd = Transformer.from_crs("EPSG:4326", self.crs, always_xy=True)
+            X, Y = fwd.transform(LON, LAT)
+            T = self.transform_north
+            col = (X - (T.c + T.a / 2.0)) / T.a
+            row = (Y - (T.f + T.e / 2.0)) / T.e  # T.e < 0 (north-up)
+            self._mesh_rc = (row.astype(np.float64), col.astype(np.float64))
+        return self._mesh_rc
+
     def to_canonical(self, sliced: np.ndarray) -> np.ndarray:
         from rasterio.warp import Resampling
 
         if self.projected:
-            field = np.flipud(sliced) if self.rows_ascending else sliced
-            arr = np.where(np.isnan(field), grid.NODATA, field)
-            return grid.resample_to_grid(
-                arr, self.transform_north, self.crs,
-                resampling=Resampling.cubic_spline, src_nodata=grid.NODATA,
-            )
+            field = np.flipud(sliced) if self.rows_ascending else sliced  # north-up
+            row, col = self._mesh()
+            nlat, nlon = field.shape
+            valid = (row >= 0) & (row <= nlat - 1) & (col >= 0) & (col <= nlon - 1)
+            r0 = np.clip(np.floor(row).astype(np.int64), 0, nlat - 2)
+            c0 = np.clip(np.floor(col).astype(np.int64), 0, nlon - 2)
+            fr = np.clip(row - r0, 0.0, 1.0)
+            fc = np.clip(col - c0, 0.0, 1.0)
+            f = field.astype(np.float64)
+            top = f[r0, c0] * (1 - fc) + f[r0, c0 + 1] * fc
+            bot = f[r0 + 1, c0] * (1 - fc) + f[r0 + 1, c0 + 1] * fc
+            out = (top * (1 - fr) + bot * fr).astype(np.float32)
+            out[~valid] = grid.NODATA
+            out[~np.isfinite(out)] = grid.NODATA
+            return out
         oriented = np.flipud(sliced) if self.rows_ascending else sliced
         if self.rows_ascending:
             north_edge = self.south + self.r1 * self.dlat

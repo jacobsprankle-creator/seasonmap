@@ -48,6 +48,7 @@ FAMILIES: List[Tuple[str, str, str, float]] = [
     ("ukmet", "ukmo_seamless", "UKMET", 24.0),
     ("icon", "icon_seamless", "ICON", 24.0),
     ("gem", "gem_seamless", "GEM", 24.0),
+    ("nbm", "ncep_nbm_conus", "NBM", 24.0),  # NWS blend — temp + precip only (no mslp)
 ]
 MAX_ZOOM = 5
 KEEP_RUNS = 2      # runs with tiles on R2 (active + previous)
@@ -91,20 +92,23 @@ def _products(fam: str, label: str, fk: str, run_stamp: str, vals: Dict[str, np.
     pr = vals["precipitation"]
     precip = np.where(pr == grid.NODATA, grid.NODATA, np.maximum(pr, 0.0) / 25.4).astype(np.float32)
 
-    mslp = vals["pressure_msl"].astype(np.float32)
-    valid = mslp != grid.NODATA
-    if valid.any() and float(np.nanmean(mslp[valid])) > 10000.0:  # Pa, not hPa
-        mslp[valid] = mslp[valid] / 100.0
-
-    return [
+    outs = [
         LayerOutput(f"{fam}_tmax", fk, _masked(temp, land), "temp_f", -10, 110, "°F",
                     f"{label} 2-m temperature — live hourly", extra_meta=meta),
         LayerOutput(f"{fam}_precip3", fk, _masked(precip, land), "precip_in_step", 0, 1.5, "in",
                     f"{label} step precipitation — live hourly", extra_meta=meta),
-        LayerOutput(f"{fam}_sfc", fk, _masked(precip, land), "precip_in_step", 0, 1.5, "in",
-                    f"{label} surface map — MSLP isobars over step precipitation (live)",
-                    extra_meta=meta, contour_interval=4.0, contour_values=mslp),
     ]
+
+    if vals.get("pressure_msl") is not None:  # blends (NBM) carry no mslp
+        mslp = vals["pressure_msl"].astype(np.float32)
+        valid = mslp != grid.NODATA
+        if valid.any() and float(np.nanmean(mslp[valid])) > 10000.0:  # Pa, not hPa
+            mslp[valid] = mslp[valid] / 100.0
+        outs.append(
+            LayerOutput(f"{fam}_sfc", fk, _masked(precip, land), "precip_in_step", 0, 1.5, "in",
+                        f"{label} surface map — MSLP isobars over step precipitation (live)",
+                        extra_meta=meta, contour_interval=4.0, contour_values=mslp))
+    return outs
 
 
 _cmap_cache: Dict[Tuple[str, float, float], dict] = {}
