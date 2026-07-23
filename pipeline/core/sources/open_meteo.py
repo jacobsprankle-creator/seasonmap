@@ -173,13 +173,21 @@ MODEL_PARAM_KEYS = ["tmax", "precip_accum", "snow_accum", "mslp", "z500", "w250"
 
 
 def fetch_model_fields(model_id: str, run_key: str):
-    """One model's forecast fields — thin wrapper over the batched fetcher.
+    """One model's forecast fields.
 
-    If OPEN_METEO_MODEL_GROUP (comma list of open-meteo model ids) contains
-    model_id, the FIRST call fetches the whole group in one grid pass and
-    disk-caches every member — sibling model layers then hit cache instantly.
-    CI sets the group per matrix job; local single-layer runs fetch solo.
+    Source order (MODEL_SOURCE env, default "s3"):
+      s3  — Open-Meteo's AWS Open Data mirror: no quotas, no rate limits.
+      api — the HTTP API (quota-limited); also the automatic fallback when
+            the S3 path fails for a family (e.g. projected grids like HRRR).
     """
+    source = os.environ.get("MODEL_SOURCE", "s3").lower()
+    if source != "api":
+        try:
+            from . import openmeteo_s3
+
+            return openmeteo_s3.fetch_models_batch([model_id], run_key)[model_id]
+        except Exception as exc:  # noqa: BLE001 — any S3-path failure falls back
+            print(f"  [model-source] s3 path failed for {model_id} ({exc}); falling back to API", flush=True)
     group = [s.strip() for s in os.environ.get("OPEN_METEO_MODEL_GROUP", "").split(",") if s.strip()]
     ids = group if model_id in group else [model_id]
     return fetch_models_batch(ids, run_key)[model_id]
