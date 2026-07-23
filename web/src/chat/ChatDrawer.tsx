@@ -3,7 +3,7 @@
  * runs the Anthropic tool loop server-side and returns
  * {answer_markdown, pins, layer, date} — pins land on the map via App.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CHAT_API } from "../config";
 import type { Pin } from "../map/MapView";
 
@@ -11,6 +11,15 @@ interface Msg {
   role: "user" | "assistant";
   content: string;
 }
+
+const HISTORY_KEY = "seasonmap-chat";
+const loadHistory = (): Msg[] => {
+  try {
+    return JSON.parse(sessionStorage.getItem(HISTORY_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+};
 
 export interface HighlightSpec {
   layer: string;
@@ -31,6 +40,10 @@ function renderMd(src: string): string {
       const li = l.match(/^\s*[-*]\s+(.*)$/);
       if (li) l = `<span class="md-li">•</span>${li[1]}`;
       l = l
+        .replace(
+          /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+          `<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>`
+        )
         .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
         .replace(/\*([^*]+)\*/g, "<i>$1</i>")
         .replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -58,10 +71,20 @@ interface Props {
 
 export function ChatDrawer({ onPins, onHighlights, onSwitchLayer, context }: Props) {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [messages, setMessages] = useState<Msg[]>(loadHistory);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [slow, setSlow] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
+
+  // Conversation survives a refresh (session-scoped, never sent anywhere new).
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(HISTORY_KEY, JSON.stringify(messages.slice(-40)));
+    } catch {
+      /* storage full/blocked — chat still works */
+    }
+  }, [messages]);
 
   const send = async () => {
     const q = input.trim();
@@ -70,11 +93,18 @@ export function ChatDrawer({ onPins, onHighlights, onSwitchLayer, context }: Pro
     setMessages(history);
     setInput("");
     setBusy(true);
+    setSlow(false);
+    // Tool loops legitimately take a while — reassure, then hard-stop at 90s
+    // instead of leaving the drawer spinning forever on a hung request.
+    const slowTimer = window.setTimeout(() => setSlow(true), 6000);
+    const ctrl = new AbortController();
+    const killTimer = window.setTimeout(() => ctrl.abort(), 90000);
     try {
       const resp = await fetch(CHAT_API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: history, context }),
+        signal: ctrl.signal,
       });
       const body = await resp.json();
       if (!resp.ok) throw new Error(body.error ?? `HTTP ${resp.status}`);
@@ -87,9 +117,16 @@ export function ChatDrawer({ onPins, onHighlights, onSwitchLayer, context }: Pro
         onSwitchLayer?.(body.layer as string);
       }
     } catch (err) {
-      setMessages((m) => [...m, { role: "assistant", content: `Something broke: ${String(err)}` }]);
+      const msg =
+        (err as Error)?.name === "AbortError"
+          ? "That took too long and I gave up — try asking again (or something narrower)."
+          : `Something broke: ${String(err)}`;
+      setMessages((m) => [...m, { role: "assistant", content: msg }]);
     } finally {
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(killTimer);
       setBusy(false);
+      setSlow(false);
       requestAnimationFrame(() =>
         scroller.current?.scrollTo({ top: scroller.current.scrollHeight })
       );
@@ -145,6 +182,7 @@ export function ChatDrawer({ onPins, onHighlights, onSwitchLayer, context }: Pro
         {busy && (
           <div className="chat-msg chat-assistant chat-typing" aria-label="Thinking">
             <span /><span /><span />
+            {slow && <em className="chat-slow">querying live weather data…</em>}
           </div>
         )}
       </div>

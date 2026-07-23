@@ -5,7 +5,7 @@
  * layer/date and caches the decoded GeoTIFF (LRU of 12 — a slider sweep stays
  * warm). The canonical-grid affine transform comes from meta.grid.
  */
-import { fromArrayBuffer, type GeoTIFF } from "geotiff";
+import type { GeoTIFF } from "geotiff";
 import type { LayerMeta } from "../types";
 
 const cache = new Map<string, Promise<GeoTIFF>>();
@@ -36,6 +36,9 @@ export async function sampleValue(
   if (col < 0 || col >= g.width || row < 0 || row >= g.height) return null;
 
   const tiff = await lru(cogUrl, async () => {
+    // Dynamic import: geotiff.js only loads when someone actually clicks the
+    // map — keeps it out of the first-paint bundle.
+    const { fromArrayBuffer } = await import("geotiff");
     const resp = await fetch(cogUrl);
     if (!resp.ok) throw new Error(`COG HTTP ${resp.status}`);
     return fromArrayBuffer(await resp.arrayBuffer());
@@ -59,7 +62,12 @@ export function formatValue(value: number | null, meta: LayerMeta): string {
     case "probability":
       return `${Math.round(value * 100)}% chance a freeze has occurred`;
     case "doy_date": {
-      const d = new Date(Date.UTC(2026, 0, 1) + (Math.round(value) - 1) * 86400000);
+      // Anchor DOY→date math to the layer's own publication year — never a
+      // hardcoded year (leap years shift everything after Feb 28).
+      const year =
+        Number((meta.latest ?? meta.dates?.[0] ?? "").slice(0, 4)) ||
+        new Date().getUTCFullYear();
+      const d = new Date(Date.UTC(year, 0, 1) + (Math.round(value) - 1) * 86400000);
       return `first freeze ~${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
     }
     case "snow_state":

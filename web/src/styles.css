@@ -193,7 +193,9 @@ html, body, #root { margin: 0; height: 100%; }
 .radar-control input[type="range"] { flex: 1; accent-color: var(--accent); }
 .radar-control output { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-.chat-typing { display: inline-flex; gap: 4px; padding: 12px 14px; }
+.chat-typing { display: inline-flex; gap: 4px; padding: 12px 14px; align-items: center; }
+.chat-slow { font-size: 11px; opacity: 0.6; margin-left: 8px; font-style: italic; }
+.chat-msg a { color: var(--accent); }
 .chat-typing span {
   width: 7px; height: 7px; border-radius: 50%; background: #8a949e;
   animation: typing-bounce 1.2s infinite ease-in-out;
