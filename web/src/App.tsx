@@ -7,6 +7,9 @@ import { formatValue, sampleValue } from "./map/sampler";
 import { readUrlState, writeUrlState } from "./state/url";
 import { baseLayerFor, LAYER_DEFS, type LayerMeta } from "./types";
 import { ChatDrawer, type HighlightSpec } from "./chat/ChatDrawer";
+
+// Session-scoped meta cache — revisiting a tab must not re-flash the UI.
+const metaCache = new Map<string, LayerMeta>();
 import { DateSlider } from "./ui/DateSlider";
 import { FilterPanel } from "./ui/FilterPanel";
 import { LayerSwitcher } from "./ui/LayerSwitcher";
@@ -93,20 +96,33 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    setMeta(null);
     setMetaError(null);
-    if (external || externalVec) return; // live third-party feeds carry no pipeline meta
+    if (external || externalVec) {
+      setMeta(null);
+      return; // live third-party feeds carry no pipeline meta
+    }
+    // Stale-while-revalidate: a revisited layer renders instantly from cache
+    // (no bottombar collapse, no raster teardown) while a background fetch
+    // freshens it.
+    const cached = metaCache.get(layerId);
+    if (cached) {
+      setMeta(cached);
+      setDate((d) => (d && cached.dates.includes(d) ? d : cached.latest));
+    } else {
+      setMeta(null);
+    }
     fetch(`${DATA_BASE}/meta/${layerId}/latest.json`)
       .then((r) => {
         if (!r.ok) throw new Error(`meta HTTP ${r.status}`);
         return r.json() as Promise<LayerMeta>;
       })
       .then((m) => {
+        metaCache.set(layerId, m);
         if (cancelled) return;
         setMeta(m);
         setDate((d) => (d && m.dates.includes(d) ? d : m.latest));
       })
-      .catch((e) => !cancelled && setMetaError(String(e)));
+      .catch((e) => !cancelled && !cached && setMetaError(String(e)));
     return () => {
       cancelled = true;
     };
@@ -205,10 +221,6 @@ export default function App() {
       </ErrorBoundary>
 
       <header className="topbar">
-        <div className="brand">
-          <span className="brand-name">{APP.name}</span>
-          <span className="brand-tag">{APP.tagline}</span>
-        </div>
         <LayerSwitcher
           layers={LAYER_DEFS}
           active={baseLayer?.id ?? layerId}
@@ -217,22 +229,30 @@ export default function App() {
             const dflt = def?.variants?.find((v) => v.isDefault) ?? def?.variants?.[0];
             setLayerId(dflt ? dflt.id : id);
           }}
+          brand={
+            <div className="brand">
+              <span className="brand-name">{APP.name}</span>
+              <span className="brand-tag">{APP.tagline}</span>
+            </div>
+          }
+          variantSlot={
+            baseLayer?.variants ? (
+              <div className="variant-toggle" role="tablist" aria-label="Sub-layer">
+                {baseLayer.variants.map((v) => (
+                  <button
+                    key={v.id}
+                    role="tab"
+                    aria-selected={v.id === layerId}
+                    className={v.id === layerId ? "chip chip-active" : "chip"}
+                    onClick={() => setLayerId(v.id)}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            ) : undefined
+          }
         />
-        {baseLayer?.variants && (
-          <div className="variant-toggle" role="tablist" aria-label="Sub-layer">
-            {baseLayer.variants.map((v) => (
-              <button
-                key={v.id}
-                role="tab"
-                aria-selected={v.id === layerId}
-                className={v.id === layerId ? "chip chip-active" : "chip"}
-                onClick={() => setLayerId(v.id)}
-              >
-                {v.label}
-              </button>
-            ))}
-          </div>
-        )}
       </header>
 
       {chatHighlight && (
@@ -261,16 +281,6 @@ export default function App() {
         {meta && date && (
           <DateSlider dates={meta.dates} value={date} onChange={setDate} />
         )}
-        {meta && <Legend legend={meta.legend} />}
-        {externalVec && (
-          <Legend legend={{ type: "categorical", items: externalVec.colors } as LayerMeta["legend"]} />
-        )}
-        {(meta || external || externalVec) && (
-          <div className="meta-caption">
-            {external ? external.caption : externalVec ? externalVec.caption : meta!.description}
-            {!external && !externalVec && meta!.dates.length < 2 ? " · updated nightly" : ""}
-          </div>
-        )}
         {animFrames && (
           <div className="radar-control">
             <button
@@ -293,6 +303,16 @@ export default function App() {
               aria-label="Animation frame"
             />
             <output>{["−50 min", "−40 min", "−30 min", "−20 min", "−10 min", "latest"][animFrame]}</output>
+          </div>
+        )}
+        {meta && <Legend legend={meta.legend} />}
+        {externalVec && (
+          <Legend legend={{ type: "categorical", items: externalVec.colors } as LayerMeta["legend"]} />
+        )}
+        {(meta || external || externalVec) && (
+          <div className="meta-caption">
+            {external ? external.caption : externalVec ? externalVec.caption : meta!.description}
+            {!external && !externalVec && meta!.dates.length < 2 ? " · updated nightly" : ""}
           </div>
         )}
       </footer>

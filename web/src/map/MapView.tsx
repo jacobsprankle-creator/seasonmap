@@ -168,10 +168,11 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         const v = vectorRef.current;
         const present = VECTOR_LAYERS.filter((id) => m.getLayer(id));
         if (v && present.length) {
+          // Generous hitbox — 4 px dots shouldn't demand needle-threading.
           const feats = m.queryRenderedFeatures(
             [
-              [e.point.x - 4, e.point.y - 4],
-              [e.point.x + 4, e.point.y + 4],
+              [e.point.x - 9, e.point.y - 9],
+              [e.point.x + 9, e.point.y + 9],
             ],
             { layers: present as unknown as string[] }
           );
@@ -195,7 +196,10 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         }
         clickInfoRef.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng, feature: null });
         const coords = `${e.lngLat.lat.toFixed(3)}, ${e.lngLat.lng.toFixed(3)}`;
-        popup.setLngLat(e.lngLat).setHTML(`<div class="popup"><em>…</em></div>`).addTo(m);
+        popup
+          .setLngLat(e.lngLat)
+          .setHTML(`<div class="popup"><span class="popup-loading">Loading forecast…</span></div>`)
+          .addTo(m);
         const text = sampleRef.current
           ? await sampleRef.current(e.lngLat.lng, e.lngLat.lat).catch(() => "")
           : "";
@@ -223,21 +227,60 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Swap the thematic PMTiles source when layer/date changes; the slider
-  // swaps URLs, adjacent dates stay warm in the browser cache.
+  // Swap the thematic source when layer/date changes — WITHOUT the flash.
+  //
+  // Instead of remove-then-add (which drops to bare basemap while the new
+  // PMTiles header + tiles stream in), we alternate between two layer ids:
+  // add the NEW one first, let it fade in over the old, then remove the old
+  // a beat later. Scrubbing the date slider reads as a crossfade.
   //
   // Gated on styleReady (set once at the map's initial `load`) and applied
   // synchronously after that. Do NOT wait on `load`/`isStyleLoaded()` here:
   // `load` fires only once per map lifetime, and `isStyleLoaded()` reports
   // false whenever tiles are merely streaming — waiting on either silently
   // drops layer switches.
+  const flipRef = useRef(0);
+  const curThematic = useRef<string | null>(null);
   useEffect(() => {
     if (!map || !styleReady) return;
-    if (map.getLayer(THEMATIC_LAYER)) map.removeLayer(THEMATIC_LAYER);
-    if (map.getSource(THEMATIC_SOURCE)) map.removeSource(THEMATIC_SOURCE);
+    // Capture the OLD slot's ids NOW — the ref mutates below.
+    const oldIdx = flipRef.current;
+    const oldLyr = `${THEMATIC_LAYER}-${oldIdx}`;
+    const oldSrc = `${THEMATIC_SOURCE}-${oldIdx % 2}`;
+    const removeOld = () => {
+      if (map.getLayer(oldLyr)) map.removeLayer(oldLyr);
+      if (map.getSource(oldSrc)) {
+        const inUse = map.getStyle().layers?.some((l) => (l as any).source === oldSrc);
+        if (!inUse) {
+          try {
+            map.removeSource(oldSrc);
+          } catch {
+            /* next swap cleans it */
+          }
+        }
+      }
+    };
+    if (!external && !tilesUrl) {
+      removeOld();
+      curThematic.current = null;
+      return;
+    }
+    const idx = ++flipRef.current;
+    const src = `${THEMATIC_SOURCE}-${idx % 2}`;
+    const lyr = `${THEMATIC_LAYER}-${idx}`;
+    if (map.getSource(src)) {
+      // Slot re-used before its removal timer fired — clear it now.
+      map.getStyle().layers?.forEach((l) => {
+        if ((l as any).source === src && map.getLayer(l.id)) map.removeLayer(l.id);
+      });
+      try {
+        map.removeSource(src);
+      } catch {
+        /* already gone */
+      }
+    }
     if (external) {
-      // Live third-party raster tiles (radar, satellite).
-      map.addSource(THEMATIC_SOURCE, {
+      map.addSource(src, {
         type: "raster",
         tiles: external.tiles,
         tileSize: 256,
@@ -245,26 +288,36 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         attribution: external.attribution,
       });
       map.addLayer({
-        id: THEMATIC_LAYER,
+        id: lyr,
         type: "raster",
-        source: THEMATIC_SOURCE,
-        paint: { "raster-opacity": external.opacity },
+        source: src,
+        paint: { "raster-opacity": external.opacity, "raster-fade-duration": 150 },
       });
-      return;
+    } else {
+      map.addSource(src, {
+        type: "raster",
+        url: `pmtiles://${tilesUrl}`,
+        tileSize: 256,
+        maxzoom,
+      });
+      map.addLayer({
+        id: lyr,
+        type: "raster",
+        source: src,
+        paint: {
+          "raster-opacity": rasterOpacity ?? 0.8,
+          "raster-resampling": "linear",
+          "raster-fade-duration": 150,
+        },
+      });
     }
-    if (!tilesUrl) return;
-    map.addSource(THEMATIC_SOURCE, {
-      type: "raster",
-      url: `pmtiles://${tilesUrl}`,
-      tileSize: 256,
-      maxzoom,
-    });
-    map.addLayer({
-      id: THEMATIC_LAYER,
-      type: "raster",
-      source: THEMATIC_SOURCE,
-      paint: { "raster-opacity": rasterOpacity ?? 0.8, "raster-resampling": "linear" },
-    });
+    curThematic.current = lyr;
+    // Old layer lingers briefly UNDER the incoming one, then goes — no gap.
+    const t = window.setTimeout(removeOld, 400);
+    return () => {
+      window.clearTimeout(t);
+      removeOld();
+    };
   }, [map, styleReady, tilesUrl, maxzoom, external, rasterOpacity]);
 
   // Vector overlay (storm tracks): GeoJSON source + data-driven color,
@@ -274,19 +327,32 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
     for (const id of VECTOR_LAYERS) if (map.getLayer(id)) map.removeLayer(id);
     if (map.getSource(VECTOR_SOURCE)) map.removeSource(VECTOR_SOURCE);
     if (!vector) return;
-    map.addSource(VECTOR_SOURCE, { type: "geojson", data: vector.url });
+    // generateId gives every feature a numeric id → feature-state hover works.
+    map.addSource(VECTOR_SOURCE, { type: "geojson", data: vector.url, generateId: true });
     const colorExpr: any = [
       "match",
       ["get", vector.colorProp],
       ...vector.colors.flatMap((c) => [String(c.value), c.color]),
       "#8899aa",
     ];
+    const hovered = (yes: number | any, no: number | any): any => [
+      "case",
+      ["boolean", ["feature-state", "hover"], false],
+      yes,
+      no,
+    ];
     map.addLayer({
       id: "vec-fill",
       type: "fill",
       source: VECTOR_SOURCE,
       filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "fill-color": colorExpr, "fill-opacity": vector.fillOpacity ?? 0.18 },
+      paint: {
+        "fill-color": colorExpr,
+        "fill-opacity": hovered(
+          Math.min((vector.fillOpacity ?? 0.18) + 0.18, 0.85),
+          vector.fillOpacity ?? 0.18
+        ),
+      },
     });
     // Polygon outlines make alert/outlook/drought areas pop against the basemap.
     map.addLayer({
@@ -294,7 +360,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       type: "line",
       source: VECTOR_SOURCE,
       filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "line-color": colorExpr, "line-width": 1.6, "line-opacity": 0.9 },
+      paint: { "line-color": colorExpr, "line-width": hovered(2.6, 1.6), "line-opacity": 0.9 },
     });
     map.addLayer({
       id: "vec-line",
@@ -303,10 +369,14 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       filter: ["==", ["geometry-type"], "LineString"],
       paint: {
         "line-color": colorExpr,
-        "line-width": ["interpolate", ["linear"], ["zoom"], 3, 1, 6, 2, 9, 3.5],
-        "line-opacity": 0.85,
+        "line-width": hovered(
+          ["interpolate", ["linear"], ["zoom"], 3, 2.5, 6, 4, 9, 6],
+          ["interpolate", ["linear"], ["zoom"], 3, 1, 6, 2, 9, 3.5]
+        ),
+        "line-opacity": hovered(1, 0.85),
       },
     });
+    const r = vector.circleRadius ?? 8;
     map.addLayer({
       id: "vec-circle",
       type: "circle",
@@ -314,11 +384,40 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       filter: ["==", ["geometry-type"], "Point"],
       paint: {
         "circle-color": colorExpr,
-        "circle-radius": vector.circleRadius ?? 8,
+        "circle-radius": hovered(r + 3, r),
         "circle-stroke-color": "#ffffff",
-        "circle-stroke-width": vector.circleRadius && vector.circleRadius < 6 ? 1 : 2,
+        "circle-stroke-width": hovered(2.5, r < 6 ? 1 : 2),
       },
     });
+    // Hover feel: pointer cursor + highlight the feature under the mouse.
+    let hoverId: number | string | undefined;
+    const setHover = (id: number | string | undefined) => {
+      if (id === hoverId) return;
+      if (hoverId !== undefined)
+        map.setFeatureState({ source: VECTOR_SOURCE, id: hoverId }, { hover: false });
+      hoverId = id;
+      if (hoverId !== undefined)
+        map.setFeatureState({ source: VECTOR_SOURCE, id: hoverId }, { hover: true });
+    };
+    const onMove = (e: maplibregl.MapLayerMouseEvent) => {
+      map.getCanvas().style.cursor = "pointer";
+      setHover(e.features?.[0]?.id as number | undefined);
+    };
+    const onLeave = () => {
+      map.getCanvas().style.cursor = "";
+      setHover(undefined);
+    };
+    VECTOR_LAYERS.forEach((id) => {
+      map.on("mousemove", id, onMove);
+      map.on("mouseleave", id, onLeave);
+    });
+    return () => {
+      VECTOR_LAYERS.forEach((id) => {
+        map.off("mousemove", id, onMove);
+        map.off("mouseleave", id, onLeave);
+      });
+      if (map.getCanvas()) map.getCanvas().style.cursor = "";
+    };
   }, [map, styleReady, vector]);
 
   // Animated live layers (radar, satellite): six timestamped frame sources;
@@ -331,8 +430,9 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
       if (map.getLayer(id)) map.removeLayer(id);
       if (map.getSource(id)) map.removeSource(id);
     });
+    const cur = curThematic.current;
     if (!animFrames) {
-      if (map.getLayer(THEMATIC_LAYER)) map.setPaintProperty(THEMATIC_LAYER, "raster-opacity", rasterOpacity ?? 0.8);
+      if (cur && map.getLayer(cur)) map.setPaintProperty(cur, "raster-opacity", rasterOpacity ?? 0.8);
       return;
     }
     animFrames.forEach((tiles, i) => {
@@ -344,7 +444,7 @@ export function MapView({ tilesUrl, vector, external, featureFilter, viewport = 
         paint: { "raster-opacity": 0, "raster-fade-duration": 0 },
       });
     });
-    if (map.getLayer(THEMATIC_LAYER)) map.setPaintProperty(THEMATIC_LAYER, "raster-opacity", 0);
+    if (cur && map.getLayer(cur)) map.setPaintProperty(cur, "raster-opacity", 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, styleReady, framesKey]);
 

@@ -13,15 +13,20 @@ html, body, #root { margin: 0; height: 100%; }
 .app { position: relative; height: 100%; height: 100dvh; overflow: hidden; color: var(--ink); }
 .map { position: absolute; inset: 0; }
 
-/* Top bar — mobile-first: brand row + horizontally scrollable layer chips */
+/* Top bar — two FIXED rows with identical geometry on every tab:
+   row 1: brand · category tabs   row 2: layer chips · variant dock */
 .topbar {
   position: absolute;
   top: 0; left: 0; right: 0;
   padding: max(8px, env(safe-area-inset-top)) 10px 8px;
-  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
   pointer-events: none;
 }
-.topbar > * { pointer-events: auto; }
+.topbar-row {
+  display: flex; gap: 8px; align-items: center; max-width: 100%;
+  pointer-events: none;
+}
+.topbar-row > * { pointer-events: auto; }
 .brand {
   background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 6px 12px; display: flex; flex-direction: column; line-height: 1.15;
@@ -44,7 +49,10 @@ html, body, #root { margin: 0; height: 100%; }
 .chip {
   border: 0; border-radius: 8px; padding: 6px 10px; white-space: nowrap;
   background: transparent; font-size: 13px; cursor: pointer;
+  transition: background 0.12s ease, transform 0.06s ease;
 }
+.chip:hover:not(:disabled):not(.chip-active) { background: rgba(46, 125, 50, 0.1); }
+.chip:active:not(:disabled) { transform: scale(0.94); }
 .chip:disabled { opacity: 0.4; cursor: not-allowed; }
 .chip-active { background: var(--accent); color: #fff; }
 
@@ -97,9 +105,16 @@ html, body, #root { margin: 0; height: 100%; }
 .legend-labels { display: flex; justify-content: space-between; font-size: 11px; opacity: 0.75; margin-top: 3px; }
 
 .variant-toggle {
-  display: flex; gap: 4px; padding: 4px; flex-wrap: wrap;
+  display: flex; gap: 4px; padding: 4px; flex-wrap: nowrap; overflow-x: auto;
+  scrollbar-width: none;
   background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+  border-left: 3px solid var(--accent); /* reads as "sub-options of the active layer" */
 }
+
+.popup-loading { opacity: 0.6; font-style: italic; }
+
+.filter-chip { transition: background 0.12s ease, transform 0.06s ease; }
+.filter-chip:active { transform: scale(0.94); }
 
 .status-badge {
   position: absolute; top: 64px; left: 50%; transform: translateX(-50%);
